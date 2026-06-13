@@ -16,6 +16,10 @@ const PLAYER_SPEED = 60;
 const PLAYER_EYE_HEIGHT = 1.8;
 const PLAYER_MAX_HEALTH = 100;
 
+// Temporary debug aid: a red dot above every zombie so positions are always
+// visible. Set to false to remove.
+const DEBUG_DOTS = true;
+
 // ---------------------------------------------------------------------------
 // Weapons
 // ---------------------------------------------------------------------------
@@ -25,10 +29,10 @@ const WEAPONS = {
     img: images.weapons.shotgun,
     magSize: 6,
     reserveMax: 36,
-    pellets: 8,
-    spread: 0.09,
-    damage: 10, // ~3-4 shots to drop a 100 HP zombie depending on range
-    range: 60,
+    pellets: 4,
+    spread: 0.05,
+    damage: 10, // 4 pellets x 10 = 40 dmg/shot -> 2 shots on a 50 HP zombie
+    range: 80,
     fireDelay: 0.75,
     auto: false,
     reloadTime: 1.2,
@@ -516,6 +520,7 @@ function makeBarSprite(color, opacity) {
 }
 
 const zombies = [];
+const corpses = []; // dying zombies animating their fall + fade
 
 class Zombie {
   constructor(isBoss = false) {
@@ -537,7 +542,13 @@ class Zombie {
     const width = height * aspect;
     this.sprite.scale.set(width, height, 1);
     this.sprite.center.set(0.5, 0); // anchor at feet → stands on the ground
+    this.sprite.frustumCulled = false; // always render, never culled at edges
     this.sprite.userData.zombie = this;
+
+    // Body dimensions used by the manual hit test.
+    this.height = height;
+    this.width = width;
+    this.hitRadius = Math.max(0.7, width * 0.6); // generous, forgiving aim
 
     // ground shadow blob
     this.shadow = new THREE.Mesh(
@@ -553,8 +564,9 @@ class Zombie {
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.scale.set(width * 1.5, width * 1.5, 1);
     this.shadow.position.y = 0.04;
+    this.shadow.frustumCulled = false;
 
-    this.maxHealth = isBoss ? 500 : 100;
+    this.maxHealth = isBoss ? 250 : 50;
     this.health = this.maxHealth;
     this.speed = isBoss ? 2.2 : 3.0 + Math.random() * 1.6;
     this.damage = isBoss ? 22 : 9;
@@ -572,19 +584,32 @@ class Zombie {
     this.healthBarFill.scale.set(this.barWidth, isBoss ? 0.2 : 0.12, 1);
     this.healthBarBg.visible = false;
     this.healthBarFill.visible = false;
+    this.healthBarBg.frustumCulled = false;
+    this.healthBarFill.frustumCulled = false;
+
+    // Debug locator dot, always visible above the head.
+    if (DEBUG_DOTS) {
+      this.debugDot = makeBarSprite(0xff0000, 1);
+      this.debugDot.scale.set(0.3, 0.3, 1);
+      this.debugDot.renderOrder = 1001;
+      this.debugDot.frustumCulled = false;
+    }
+
+    this.dying = false;
 
     this.spawn();
     scene.add(this.sprite);
     scene.add(this.shadow);
     scene.add(this.healthBarBg);
     scene.add(this.healthBarFill);
+    if (this.debugDot) scene.add(this.debugDot);
     zombies.push(this);
   }
 
   spawn() {
     const p = controls.object.position;
-    const MIN = 22; // minimum spawn distance from the player
-    const MAX = 65;
+    const MIN = 15; // minimum spawn distance from the player
+    const MAX = 20;
     // Bias toward the open stretch of street ahead of the player so far
     // spawns don't collapse against the narrow side walls when clamped.
     const awayDir = p.z >= 0 ? -1 : 1;
@@ -616,6 +641,7 @@ class Zombie {
     }
     this.sprite.position.set(x, 0, z);
     this.shadow.position.set(x, 0.04, z);
+    if (this.debugDot) this.debugDot.position.set(x, this.barY + 0.5, z);
   }
 
   update(delta, playerPos) {
@@ -636,9 +662,10 @@ class Zombie {
         this.attackCooldown = 1.0;
       }
     }
-    // Shadow + health bar follow the zombie.
+    // Shadow + health bar + debug dot follow the zombie.
     this.shadow.position.x = pos.x;
     this.shadow.position.z = pos.z;
+    if (this.debugDot) this.debugDot.position.set(pos.x, this.barY + 0.5, pos.z);
     this.updateBars();
   }
 
@@ -664,25 +691,77 @@ class Zombie {
     }, 60);
     this.updateBars();
     if (this.health <= 0) {
-      this.kill();
+      this.die();
       return true;
     }
     return false;
   }
 
-  kill() {
+  // Begin dying: remove from active gameplay immediately (so it stops
+  // chasing/attacking and isn't shot again), burst blood, and hand the
+  // sprite to the corpse system to fall over and fade out.
+  die() {
+    if (this.dead) return;
+    this.dead = true;
+
+    // big blood splatter at chest height
+    const pos = this.sprite.position;
+    spawnBlood(new THREE.Vector3(pos.x, this.height * 0.55, pos.z), 22);
+
+    // strip non-corpse visuals
+    scene.remove(this.shadow);
+    scene.remove(this.healthBarBg);
+    scene.remove(this.healthBarFill);
+    this.shadow.material.dispose();
+    this.shadow.geometry.dispose();
+    this.healthBarBg.material.dispose();
+    this.healthBarFill.material.dispose();
+    if (this.debugDot) {
+      scene.remove(this.debugDot);
+      this.debugDot.material.dispose();
+    }
+
+    // hand the body sprite to the falling-corpse animation
+    this.sprite.material.color.setRGB(1, 1, 1);
+    this.sprite.material.alphaTest = 0; // so it fades smoothly
+    corpses.push({ sprite: this.sprite, t: 0, duration: 0.7 });
+
+    const i = zombies.indexOf(this);
+    if (i !== -1) zombies.splice(i, 1);
+  }
+
+  // Immediate, full removal with no animation (used when resetting).
+  dispose() {
     this.dead = true;
     scene.remove(this.sprite);
     scene.remove(this.shadow);
     scene.remove(this.healthBarBg);
     scene.remove(this.healthBarFill);
+    if (this.debugDot) scene.remove(this.debugDot);
     this.sprite.material.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
+    if (this.debugDot) this.debugDot.material.dispose();
     const i = zombies.indexOf(this);
     if (i !== -1) zombies.splice(i, 1);
+  }
+}
+
+// Animate falling corpses, then remove them.
+function updateCorpses(delta) {
+  for (let i = corpses.length - 1; i >= 0; i--) {
+    const c = corpses[i];
+    c.t += delta;
+    const k = Math.min(1, c.t / c.duration);
+    c.sprite.material.rotation = -k * (Math.PI / 2); // fall over (pivot at feet)
+    c.sprite.material.opacity = 1 - k;
+    if (k >= 1) {
+      scene.remove(c.sprite);
+      c.sprite.material.dispose();
+      corpses.splice(i, 1);
+    }
   }
 }
 
@@ -722,8 +801,6 @@ function onZombieKilled(points = 100) {
 // ---------------------------------------------------------------------------
 // Shooting
 // ---------------------------------------------------------------------------
-const raycaster = new THREE.Raycaster();
-
 const loadout = {
   shotgun: { mag: WEAPONS.shotgun.magSize, reserve: WEAPONS.shotgun.reserveMax },
   machinegun: { mag: WEAPONS.machinegun.magSize, reserve: WEAPONS.machinegun.reserveMax },
@@ -758,6 +835,47 @@ function reload() {
   }, w.reloadTime * 1000);
 }
 
+// Manual ray-vs-body hit test (reliable, unlike Sprite.raycast). Models each
+// zombie as a stack of spheres along its vertical body axis and returns the
+// nearest one the ray passes through within range.
+function nearestZombieHit(origin, dir, range) {
+  let best = null;
+  for (const z of zombies) {
+    if (z.dead) continue;
+    const px = z.sprite.position.x;
+    const pz = z.sprite.position.z;
+    const R = z.hitRadius;
+    const steps = Math.max(3, Math.round(z.height / 0.5));
+    for (let s = 0; s <= steps; s++) {
+      const cy = z.height * (s / steps);
+      // project sphere center onto the ray
+      const ox = px - origin.x;
+      const oy = cy - origin.y;
+      const oz = pz - origin.z;
+      const t = ox * dir.x + oy * dir.y + oz * dir.z;
+      if (t <= 0 || t > range) continue;
+      const dx = origin.x + dir.x * t - px;
+      const dy = origin.y + dir.y * t - cy;
+      const dz = origin.z + dir.z * t - pz;
+      if (dx * dx + dy * dy + dz * dz <= R * R) {
+        if (!best || t < best.t) {
+          best = {
+            zombie: z,
+            t,
+            point: new THREE.Vector3(
+              origin.x + dir.x * t,
+              origin.y + dir.y * t,
+              origin.z + dir.z * t
+            ),
+          };
+        }
+        break; // this zombie is hit; stop sampling its body
+      }
+    }
+  }
+  return best;
+}
+
 function tryFire() {
   if (!game.running || reloading || fireTimer > 0) return;
   const w = currentWeapon();
@@ -776,7 +894,6 @@ function tryFire() {
   const camDir = new THREE.Vector3();
   camera.getWorldDirection(camDir);
   const origin = camera.getWorldPosition(new THREE.Vector3());
-  const sprites = zombies.map((z) => z.sprite);
 
   // Accumulate damage per zombie so each shot shows ONE blood burst and ONE
   // damage number (rather than one per pellet).
@@ -787,16 +904,14 @@ function tryFire() {
     dir.y += (Math.random() - 0.5) * w.spread;
     dir.z += (Math.random() - 0.5) * w.spread;
     dir.normalize();
-    raycaster.set(origin, dir);
-    raycaster.far = w.range;
-    const hits = raycaster.intersectObjects(sprites, false);
-    if (!hits.length) continue;
-    const z = hits[0].object.userData.zombie;
-    if (!z || z.dead) continue;
+    const hit = nearestZombieHit(origin, dir, w.range);
+    if (!hit) continue;
+    const z = hit.zombie;
+    if (z.dead) continue;
     const killed = z.hit(w.damage);
     const rec = dealt.get(z) || { dmg: 0, point: null, killed: false };
     rec.dmg += w.damage;
-    rec.point = hits[0].point.clone();
+    rec.point = hit.point.clone();
     rec.killed = rec.killed || killed;
     dealt.set(z, rec);
     if (killed) onZombieKilled(z.isBoss ? 500 : 100);
@@ -943,8 +1058,14 @@ controls.addEventListener('unlock', () => {
 });
 
 function resetGame() {
-  for (const z of [...zombies]) z.kill();
+  for (const z of [...zombies]) z.dispose();
   zombies.length = 0;
+  // clear any falling corpses
+  for (const c of corpses) {
+    scene.remove(c.sprite);
+    c.sprite.material.dispose();
+  }
+  corpses.length = 0;
   game.running = false;
   game.health = PLAYER_MAX_HEALTH;
   game.kills = 0;
@@ -996,9 +1117,9 @@ function makeBloodTexture() {
 const bloodTexture = makeBloodTexture();
 const bloodParticles = [];
 
-function spawnBlood(point) {
+function spawnBlood(point, count = 12) {
   if (!point) return;
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < count; i++) {
     const mat = new THREE.SpriteMaterial({
       map: bloodTexture,
       color: 0xaa0000,
@@ -1116,6 +1237,7 @@ function animate() {
   }
 
   updateBlood(delta);
+  updateCorpses(delta);
 
   if (muzzleLight.intensity > 0) {
     muzzleLight.intensity = Math.max(0, muzzleLight.intensity - delta * 30);
