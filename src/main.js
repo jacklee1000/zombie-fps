@@ -16,10 +16,6 @@ const PLAYER_SPEED = 60;
 const PLAYER_EYE_HEIGHT = 1.8;
 const PLAYER_MAX_HEALTH = 100;
 
-// Temporary debug aid: a red dot above every zombie so positions are always
-// visible. Set to false to remove.
-const DEBUG_DOTS = true;
-
 // ---------------------------------------------------------------------------
 // Weapons
 // ---------------------------------------------------------------------------
@@ -65,7 +61,7 @@ const scene = new THREE.Scene();
 const SKY_COLOR = 0x2b2f5e; // dark blue-purple night sky
 const FOG_COLOR = 0x232a4d;
 scene.background = new THREE.Color(SKY_COLOR);
-scene.fog = new THREE.FogExp2(FOG_COLOR, 0.006);
+scene.fog = new THREE.FogExp2(FOG_COLOR, 0.013); // heavier, cinematic haze
 
 const camera = new THREE.PerspectiveCamera(
   75,
@@ -77,9 +73,9 @@ const camera = new THREE.PerspectiveCamera(
 // ---------------------------------------------------------------------------
 // Lighting — bright, so everything is clearly visible
 // ---------------------------------------------------------------------------
-scene.add(new THREE.AmbientLight(0x9fb0d8, 0.8));
-scene.add(new THREE.HemisphereLight(0x5c6cae, 0x2c3038, 0.7));
-const moon = new THREE.DirectionalLight(0xaec4f0, 0.8);
+scene.add(new THREE.AmbientLight(0x8090c8, 0.5));
+scene.add(new THREE.HemisphereLight(0x4a5694, 0x20242c, 0.45));
+const moon = new THREE.DirectionalLight(0xaec4f0, 0.7);
 moon.position.set(-40, 90, -30);
 scene.add(moon);
 
@@ -99,6 +95,265 @@ controls.object.position.set(0, PLAYER_EYE_HEIGHT, STREET_LENGTH / 2 - 18);
 // ---------------------------------------------------------------------------
 const textureLoader = new THREE.TextureLoader();
 
+// ---------------------------------------------------------------------------
+// Procedural canvas textures (brick, asphalt, rust, fire, paper, graffiti)
+// ---------------------------------------------------------------------------
+function canvasTexture(w, h, draw, { repeat, srgb = true } = {}) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  if (repeat) {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeat[0], repeat[1]);
+  }
+  return t;
+}
+
+function makeBrickTexture() {
+  return canvasTexture(256, 256, (g, w, h) => {
+    g.fillStyle = '#2c211e'; // mortar
+    g.fillRect(0, 0, w, h);
+    const bw = 60, bh = 26, gap = 4;
+    for (let y = 0, row = 0; y < h; y += bh + gap, row++) {
+      const off = row % 2 ? (bw + gap) / 2 : 0;
+      for (let x = -bw; x < w + bw; x += bw + gap) {
+        const base = 70 + Math.random() * 35;
+        g.fillStyle = `rgb(${base + 28},${base - 14},${base - 22})`; // weathered brick
+        g.fillRect(x + off, y, bw, bh);
+        // subtle per-brick grime
+        g.fillStyle = `rgba(0,0,0,${Math.random() * 0.18})`;
+        g.fillRect(x + off, y, bw, bh);
+      }
+    }
+    // vertical soot / fire-damage streaks
+    for (let i = 0; i < 5; i++) {
+      const x = Math.random() * w;
+      const grd = g.createLinearGradient(x, h, x, h * 0.25);
+      grd.addColorStop(0, 'rgba(8,6,6,0.75)');
+      grd.addColorStop(1, 'rgba(8,6,6,0)');
+      g.fillStyle = grd;
+      g.fillRect(x - 26, 0, 52, h);
+    }
+  });
+}
+
+function makeAsphaltTexture() {
+  return canvasTexture(256, 256, (g, w, h) => {
+    g.fillStyle = '#23262c';
+    g.fillRect(0, 0, w, h);
+    const img = g.getImageData(0, 0, w, h);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = Math.random() * 36 - 18;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    g.putImageData(img, 0, 0);
+    g.strokeStyle = 'rgba(8,8,10,0.6)';
+    g.lineWidth = 1;
+    for (let i = 0; i < 9; i++) {
+      g.beginPath();
+      let x = Math.random() * w, y = Math.random() * h;
+      g.moveTo(x, y);
+      for (let s = 0; s < 6; s++) {
+        x += Math.random() * 44 - 22;
+        y += Math.random() * 44 - 22;
+        g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+  }, { repeat: [4, 14] });
+}
+
+// Light-grey base with rust blotches + scratches; meant to be multiplied by a
+// car's body color so each car keeps its paint but reads as old and rusted.
+function makeRustTexture() {
+  return canvasTexture(128, 128, (g, w, h) => {
+    g.fillStyle = '#cfcfcf';
+    g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 150; i++) {
+      const x = Math.random() * w, y = Math.random() * h, r = 2 + Math.random() * 9;
+      g.fillStyle = `rgba(${95 + Math.random() * 60},${48 + Math.random() * 30},${18 + Math.random() * 20},${0.3 + Math.random() * 0.45})`;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.strokeStyle = 'rgba(35,28,24,0.4)';
+    for (let i = 0; i < 12; i++) {
+      g.beginPath();
+      g.moveTo(Math.random() * w, Math.random() * h);
+      g.lineTo(Math.random() * w, Math.random() * h);
+      g.stroke();
+    }
+  });
+}
+
+function makeFireTexture() {
+  return canvasTexture(64, 64, (g, w, h) => {
+    const grd = g.createRadialGradient(32, 42, 2, 32, 38, 30);
+    grd.addColorStop(0, 'rgba(255,244,190,1)');
+    grd.addColorStop(0.4, 'rgba(255,142,32,0.92)');
+    grd.addColorStop(0.8, 'rgba(176,42,10,0.5)');
+    grd.addColorStop(1, 'rgba(120,20,0,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, w, h);
+  });
+}
+
+function makePaperTexture() {
+  return canvasTexture(64, 80, (g, w, h) => {
+    g.fillStyle = '#d6d0bd';
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#111';
+    g.fillRect(6, 4, w - 12, 6); // headline bar
+    g.fillStyle = 'rgba(40,40,40,0.55)';
+    for (let y = 16; y < h - 4; y += 6) g.fillRect(6, y, w - 12, 2);
+  });
+}
+
+function makeGraffitiTexture() {
+  return canvasTexture(256, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    const colors = ['#39ff14', '#ff2bd6', '#ffd400', '#19c3ff', '#ff5a2b'];
+    g.lineCap = 'round';
+    for (let pass = 0; pass < 2; pass++) {
+      g.lineWidth = 9 - pass * 3;
+      g.strokeStyle = colors[Math.floor(Math.random() * colors.length)];
+      g.beginPath();
+      let x = 20, y = h * (0.4 + Math.random() * 0.3);
+      g.moveTo(x, y);
+      for (let i = 0; i < 8; i++) {
+        x += 18 + Math.random() * 22;
+        y = h * (0.25 + Math.random() * 0.55);
+        g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+  }, { srgb: true });
+}
+
+const brickTexture = makeBrickTexture();
+const asphaltTexture = makeAsphaltTexture();
+const rustTexture = makeRustTexture();
+const fireTexture = makeFireTexture();
+const paperTexture = makePaperTexture();
+
+// ---------------------------------------------------------------------------
+// Fire effect (burning cars / smoldering buildings) — flickering light + flames
+// ---------------------------------------------------------------------------
+const fires = [];
+
+function spawnFire(pos, scale = 1) {
+  const group = new THREE.Group();
+  group.position.copy(pos);
+  const flames = [];
+  for (let i = 0; i < 3; i++) {
+    const mat = new THREE.SpriteMaterial({
+      map: fireTexture,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: true,
+    });
+    const s = new THREE.Sprite(mat);
+    const sz = (1.1 + Math.random() * 0.8) * scale;
+    s.center.set(0.5, 0);
+    s.scale.set(sz, sz * 1.6, 1);
+    s.position.set((Math.random() - 0.5) * 0.7 * scale, 0, (Math.random() - 0.5) * 0.7 * scale);
+    group.add(s);
+    flames.push({ s, base: sz, phase: Math.random() * Math.PI * 2 });
+  }
+  const light = new THREE.PointLight(0xff7a1e, 3 * scale, 13 * scale, 2);
+  light.position.y = 1.2 * scale;
+  group.add(light);
+  scene.add(group);
+  fires.push({ flames, light, t: 0 });
+}
+
+function updateFires(delta) {
+  for (const f of fires) {
+    f.t += delta;
+    for (const fl of f.flames) {
+      const k = 0.8 + Math.abs(Math.sin(f.t * 8 + fl.phase)) * 0.5;
+      fl.s.scale.set(fl.base * k, fl.base * 1.6 * k, 1);
+      fl.s.material.opacity = 0.7 + Math.random() * 0.3;
+    }
+    f.light.intensity = 2.4 + Math.sin(f.t * 12) * 0.8 + Math.random() * 0.6;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Atmosphere: scattered newspapers + wind-blown debris and tumbling papers
+// ---------------------------------------------------------------------------
+const flyers = [];
+
+function resetFlyer(fl, anywhere) {
+  fl.m.position.set(
+    -PLAY_HALF_WIDTH - 2 - Math.random() * 6,
+    0.3 + Math.random() * 4.5,
+    (Math.random() - 0.5) * STREET_LENGTH
+  );
+  if (anywhere) fl.m.position.x = (Math.random() * 2 - 1) * PLAY_HALF_WIDTH;
+  fl.vel.set(2.6 + Math.random() * 3.4, (Math.random() - 0.5) * 0.7, (Math.random() - 0.5) * 1.4);
+}
+
+function initAtmosphere() {
+  // Newspapers strewn on the ground.
+  const paperMat = new THREE.MeshStandardMaterial({
+    map: paperTexture,
+    roughness: 0.9,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 16; i++) {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.65), paperMat);
+    p.rotation.x = -Math.PI / 2;
+    p.rotation.z = Math.random() * Math.PI;
+    p.position.set(
+      (Math.random() * 2 - 1) * PLAY_HALF_WIDTH,
+      0.03,
+      (Math.random() - 0.5) * STREET_LENGTH
+    );
+    scene.add(p);
+  }
+  // Wind-blown debris specks + a few tumbling papers caught in the gusts.
+  for (let i = 0; i < 55; i++) {
+    const isPaper = i < 6;
+    const mat = isPaper
+      ? new THREE.MeshStandardMaterial({ map: paperTexture, roughness: 0.9, side: THREE.DoubleSide })
+      : new THREE.MeshBasicMaterial({
+          color: 0x55554c,
+          transparent: true,
+          opacity: 0.5,
+          side: THREE.DoubleSide,
+          fog: true,
+        });
+    const sz = isPaper ? 0.5 : 0.06 + Math.random() * 0.12;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz * 1.3), mat);
+    scene.add(m);
+    const fl = {
+      m,
+      spin: new THREE.Vector3(Math.random() * 4, Math.random() * 4, Math.random() * 4),
+      vel: new THREE.Vector3(),
+    };
+    resetFlyer(fl, true);
+    flyers.push(fl);
+  }
+}
+
+function updateAtmosphere(delta) {
+  for (const fl of flyers) {
+    fl.m.position.addScaledVector(fl.vel, delta);
+    fl.m.rotation.x += fl.spin.x * delta;
+    fl.m.rotation.y += fl.spin.y * delta;
+    fl.m.rotation.z += fl.spin.z * delta;
+    fl.m.position.y += Math.sin(fl.m.position.x + fl.m.position.z) * 0.008;
+    if (fl.m.position.x > PLAY_HALF_WIDTH + 6) resetFlyer(fl, false);
+  }
+}
+
 function buildEnvironment() {
   // --- Ground (dirt/base around the road) ---
   const baseGeo = new THREE.PlaneGeometry((PLAY_HALF_WIDTH + 40) * 2, STREET_LENGTH + 40);
@@ -108,14 +363,38 @@ function buildEnvironment() {
   base.position.y = -0.05;
   scene.add(base);
 
-  // --- Road asphalt ---
-  const roadMat = new THREE.MeshStandardMaterial({ color: 0x3a3f49, roughness: 0.95 });
+  // --- Road: wet asphalt (canvas texture + glossy sheen) ---
+  const roadMat = new THREE.MeshStandardMaterial({
+    map: asphaltTexture,
+    color: 0x7a828c,
+    roughness: 0.42,
+    metalness: 0.35,
+  });
   const road = new THREE.Mesh(
     new THREE.PlaneGeometry(ROAD_HALF_WIDTH * 2, STREET_LENGTH),
     roadMat
   );
   road.rotation.x = -Math.PI / 2;
   scene.add(road);
+
+  // --- Puddles: dark, near-mirror pools that catch the street-light specular ---
+  const puddleMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0e16,
+    roughness: 0.06,
+    metalness: 0.65,
+  });
+  for (let z = -STREET_LENGTH / 2 + 6; z < STREET_LENGTH / 2; z += 6 + Math.random() * 9) {
+    const r = 1 + Math.random() * 2.4;
+    const puddle = new THREE.Mesh(new THREE.CircleGeometry(r, 20), puddleMat);
+    puddle.rotation.x = -Math.PI / 2;
+    puddle.scale.y = 0.55 + Math.random() * 0.5; // squash into an ellipse
+    puddle.position.set(
+      (Math.random() * 2 - 1) * (ROAD_HALF_WIDTH - 2),
+      0.015,
+      z
+    );
+    scene.add(puddle);
+  }
 
   // --- White lane markings ---
   const whiteMat = new THREE.MeshStandardMaterial({
@@ -152,28 +431,45 @@ function buildEnvironment() {
     scene.add(walk);
   }
 
-  // --- Buildings with lit windows ---
-  const buildingColors = [0x4a5160, 0x545c6e, 0x3f4654, 0x5b6070, 0x474e5e];
+  // --- Brick buildings with lit windows, doors, graffiti + fire damage ---
+  const brickTints = [0x6a5048, 0x5a4f5e, 0x4f5a52, 0x6b6056, 0x55505c];
   for (const side of [-1, 1]) {
     for (let z = -STREET_LENGTH / 2 + 8; z < STREET_LENGTH / 2; z += 16) {
       const w = 11 + Math.random() * 6;
       const h = 18 + Math.random() * 38;
       const d = 12 + Math.random() * 6;
+
+      // Each building gets its own brick map clone so the tiling matches size.
+      const tex = brickTexture.clone();
+      tex.needsUpdate = true;
+      tex.repeat.set(Math.max(2, Math.round(w / 3)), Math.max(3, Math.round(h / 3)));
+
+      const fireDamaged = Math.random() < 0.4;
       const b = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, d),
         new THREE.MeshStandardMaterial({
-          color: buildingColors[Math.floor(Math.random() * buildingColors.length)],
-          roughness: 0.92,
-          emissive: 0x14161e,
+          map: tex,
+          color: fireDamaged ? 0x4a4038 : brickTints[Math.floor(Math.random() * brickTints.length)],
+          roughness: 0.95,
+          emissive: 0x0c0e14,
         })
       );
-      b.position.set(
-        side * (PLAY_HALF_WIDTH + w / 2 + 0.5),
-        h / 2,
-        z + (Math.random() * 4 - 2)
-      );
+      const bx = side * (PLAY_HALF_WIDTH + w / 2 + 0.5);
+      const bz = z + (Math.random() * 4 - 2);
+      b.position.set(bx, h / 2, bz);
       scene.add(b);
+
       addWindows(b, w, h, d, side);
+      addDoor(b, w, h, d, side);
+      if (Math.random() < 0.55) addGraffiti(b, w, h, d, side);
+
+      // Smoldering fire at the base of some fire-damaged buildings.
+      if (fireDamaged && Math.random() < 0.5) {
+        spawnFire(
+          new THREE.Vector3(bx - side * (w / 2 + 0.4), 0.4, bz + (Math.random() - 0.5) * d * 0.6),
+          0.85
+        );
+      }
     }
   }
 
@@ -192,16 +488,15 @@ function buildEnvironment() {
       scene.add(car);
     }
   }
-  // a couple of crashed cars in the road
+  // a couple of crashed, burning wrecks in the road
   for (let i = 0; i < 3; i++) {
-    const car = makeCar(0x333333);
-    car.position.set(
-      (Math.random() - 0.5) * ROAD_HALF_WIDTH,
-      0,
-      (Math.random() - 0.5) * (STREET_LENGTH - 40)
-    );
+    const car = makeCar(0x2a2a2a, true);
+    const cx = (Math.random() - 0.5) * ROAD_HALF_WIDTH;
+    const cz = (Math.random() - 0.5) * (STREET_LENGTH - 40);
+    car.position.set(cx, 0, cz);
     car.rotation.y = Math.random() * Math.PI;
     scene.add(car);
+    spawnFire(new THREE.Vector3(cx, 1.0, cz), 1.15); // engine fire
   }
 
   // --- Trash cans on the sidewalks ---
@@ -222,49 +517,108 @@ function buildEnvironment() {
 
   // --- Distant scenery billboards (use the environment images) ---
   addBackdrop(images.environments.city, 0, -STREET_LENGTH / 2 - 6, 70, 38);
+
+  // --- Newspapers + wind-blown debris ---
+  initAtmosphere();
 }
 
-function makeCar(color) {
+// A detailed, weathered car: tapered body, sloped cabin with glass, bumpers,
+// rims, glowing head/taillights, and a rust map. `burnt` makes a charred wreck.
+function makeCar(color, burnt = false) {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(2.2, 1.0, 4.6),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.5 })
-  );
-  body.position.y = 0.8;
-  g.add(body);
-
-  const cabin = new THREE.Mesh(
-    new THREE.BoxGeometry(2.0, 0.85, 2.4),
-    new THREE.MeshStandardMaterial({
-      color: 0x10141c,
-      roughness: 0.2,
-      metalness: 0.7,
-    })
-  );
-  cabin.position.set(0, 1.65, -0.2);
-  g.add(cabin);
-
-  // headlights
-  const hlMat = new THREE.MeshStandardMaterial({
-    color: 0x111111,
-    emissive: 0xfff2c0,
-    emissiveIntensity: 1.2,
+  const bodyMat = new THREE.MeshStandardMaterial({
+    map: rustTexture,
+    color: burnt ? 0x1c1a18 : color,
+    roughness: burnt ? 0.95 : 0.5,
+    metalness: burnt ? 0.2 : 0.6,
   });
-  for (const sx of [-0.7, 0.7]) {
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.1), hlMat);
-    hl.position.set(sx, 0.8, 2.35);
-    g.add(hl);
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0e14,
+    roughness: 0.12,
+    metalness: 0.5,
+    emissive: 0x05080c,
+    transparent: true,
+    opacity: burnt ? 0.45 : 0.85,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.5, metalness: 0.7 });
+
+  // Chassis + hood + trunk + cabin + roof.
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.7, 4.4), bodyMat);
+  lower.position.y = 0.75;
+  g.add(lower);
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.42, 1.5), bodyMat);
+  hood.position.set(0, 1.04, 1.45);
+  g.add(hood);
+  const trunk = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 1.2), bodyMat);
+  trunk.position.set(0, 1.06, -1.55);
+  g.add(trunk);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.78, 2.2), bodyMat);
+  cabin.position.set(0, 1.5, -0.1);
+  g.add(cabin);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.12, 1.9), bodyMat);
+  roof.position.set(0, 1.92, -0.1);
+  g.add(roof);
+
+  // Glass: windshield, rear window, side windows.
+  const windshield = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.72), glassMat);
+  windshield.position.set(0, 1.56, 1.02);
+  windshield.rotation.x = -0.5;
+  g.add(windshield);
+  const rearWin = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.6), glassMat);
+  rearWin.position.set(0, 1.56, -1.2);
+  rearWin.rotation.x = 0.5;
+  g.add(rearWin);
+  for (const sx of [-0.94, 0.94]) {
+    const sideWin = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.6), glassMat);
+    sideWin.position.set(sx, 1.55, -0.1);
+    sideWin.rotation.y = Math.PI / 2;
+    g.add(sideWin);
   }
 
-  // wheels
-  const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 14);
-  wheelGeo.rotateZ(Math.PI / 2);
-  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.9 });
-  for (const wx of [-1.05, 1.05]) {
-    for (const wz of [-1.5, 1.5]) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.position.set(wx, 0.5, wz);
-      g.add(wheel);
+  // Bumpers.
+  for (const bz of [2.2, -2.2]) {
+    const bump = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.34, 0.3), trimMat);
+    bump.position.set(0, 0.55, bz);
+    g.add(bump);
+  }
+
+  // Glowing headlights (front) + taillights (rear) — skipped on burnt wrecks.
+  if (!burnt) {
+    const hlMat = new THREE.MeshStandardMaterial({
+      color: 0xfff6d2,
+      emissive: 0xfff0c0,
+      emissiveIntensity: 2.4,
+    });
+    const tlMat = new THREE.MeshStandardMaterial({
+      color: 0x3a0000,
+      emissive: 0xff1a1a,
+      emissiveIntensity: 1.8,
+    });
+    for (const sx of [-0.7, 0.7]) {
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.28, 0.12), hlMat);
+      hl.position.set(sx, 0.85, 2.22);
+      g.add(hl);
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.1), tlMat);
+      tl.position.set(sx, 0.92, -2.22);
+      g.add(tl);
+    }
+  }
+
+  // Wheels: tire + metallic rim at each corner.
+  const tireGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.34, 18);
+  tireGeo.rotateZ(Math.PI / 2);
+  const tireMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95 });
+  const rimGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.36, 8);
+  rimGeo.rotateZ(Math.PI / 2);
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0x6a6a70, roughness: 0.4, metalness: 0.85 });
+  for (const wx of [-1.02, 1.02]) {
+    for (const wz of [-1.45, 1.45]) {
+      const tire = new THREE.Mesh(tireGeo, tireMat);
+      tire.position.set(wx, 0.5, wz);
+      g.add(tire);
+      const rim = new THREE.Mesh(rimGeo, rimMat);
+      rim.position.set(wx, 0.5, wz);
+      g.add(rim);
     }
   }
   return g;
@@ -293,6 +647,48 @@ function addWindows(building, w, h, d, side) {
       building.add(win);
     }
   }
+}
+
+// A dark doorway on the building's street-facing (inner) wall.
+function addDoor(b, w, h, d, side) {
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: 0x1a1410,
+    roughness: 0.8,
+    metalness: 0.2,
+  });
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.25, 3.4, 2.6), frameMat);
+  const doorMat = new THREE.MeshStandardMaterial({
+    color: 0x0c0a08,
+    roughness: 0.7,
+    metalness: 0.3,
+    emissive: 0x140d06,
+    emissiveIntensity: 0.5,
+  });
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.1), doorMat);
+  const x = b.position.x - side * (w / 2);
+  frame.position.set(x, 1.7, b.position.z);
+  door.position.set(x - side * 0.14, 1.6, b.position.z);
+  door.rotation.y = -side * (Math.PI / 2);
+  scene.add(frame);
+  scene.add(door);
+}
+
+// A spray-paint tag on the building's street-facing wall.
+function addGraffiti(b, w, h, d, side) {
+  const mat = new THREE.MeshBasicMaterial({
+    map: makeGraffitiTexture(),
+    transparent: true,
+    fog: true,
+  });
+  const gw = Math.min(d * 0.7, 6) + 1.5;
+  const tag = new THREE.Mesh(new THREE.PlaneGeometry(gw, gw * 0.5), mat);
+  tag.position.set(
+    b.position.x - side * (w / 2 + 0.07),
+    2.4 + Math.random() * 3,
+    b.position.z + (Math.random() - 0.5) * d * 0.5
+  );
+  tag.rotation.y = -side * (Math.PI / 2);
+  scene.add(tag);
 }
 
 function addStreetLights() {
@@ -344,7 +740,21 @@ function addBackdrop(url, x, z, w, h, rotY = 0) {
 buildEnvironment();
 
 // ---------------------------------------------------------------------------
-// Zombie sprites — background removed (flood-fill cutout) + ground shadow
+// Zombies — PNG image sprites ONLY (no 3D geometry).
+// ---------------------------------------------------------------------------
+// Enemy types differ only in size / speed / toughness; the artwork is the PNG
+// cut-outs from the project folder. The same image is reused at different sizes
+// and speeds (per-instance jitter) to add variety.
+const ZOMBIE_TYPES = {
+  walker: { height: 1.95, health: 50, damage: 9, minSpeed: 2.2, maxSpeed: 3.0, points: 100 },
+  runner: { height: 1.6, health: 32, damage: 7, minSpeed: 5.0, maxSpeed: 6.5, points: 150 },
+  boss: { height: 3.0, health: 250, damage: 22, minSpeed: 1.7, maxSpeed: 2.0, points: 500 },
+};
+
+// ---------------------------------------------------------------------------
+// Image-sprite zombies. Transparent PNG cut-outs are flood-filled to erase any
+// residual backdrop, cropped to the figure, then shown as ground-anchored
+// camera-facing billboards.
 // ---------------------------------------------------------------------------
 const zombieSkins = [];
 const bossSkins = [];
@@ -387,6 +797,7 @@ function cutoutAndCrop(img) {
   while (stack.length) {
     const i = stack.pop();
     const p = i * 4;
+    // Pixels that are already transparent (PNG alpha) are background too.
     const r = d[p];
     const g = d[p + 1];
     const b = d[p + 2];
@@ -407,6 +818,12 @@ function cutoutAndCrop(img) {
       const ni = ny * w + nx;
       if (visited[ni]) continue;
       const np = ni * 4;
+      // Already-transparent neighbours are background — always flood through.
+      if (d[np + 3] === 0) {
+        visited[ni] = 1;
+        stack.push(ni);
+        continue;
+      }
       const sat = Math.max(d[np], d[np + 1], d[np + 2]) - Math.min(d[np], d[np + 1], d[np + 2]);
       if (sat > SAT_TOL) continue; // protect colourful pixels (blood, skin)
       const dr = d[np] - r;
@@ -484,10 +901,31 @@ function prepareSkin(url) {
   });
 }
 
+// Scan every zombie/boss PNG in the project and prepare a sprite skin for each.
 async function preloadSkins() {
   zombieSkins.push(...(await Promise.all(images.zombies.map(prepareSkin))));
   bossSkins.push(...(await Promise.all(images.bosses.map(prepareSkin))));
   skinsReady = true;
+}
+
+// A billboard zombie: one camera-facing PNG sprite, anchored at the feet.
+function buildZombieSpriteModel(skin, height) {
+  const spriteMat = new THREE.SpriteMaterial({
+    map: skin ? skin.texture : null,
+    transparent: true,
+    alphaTest: 0.25,
+    depthWrite: true,
+    fog: true,
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  const aspect = skin ? skin.aspect : 0.55;
+  const width = height * aspect;
+  sprite.scale.set(width, height, 1);
+  sprite.center.set(0.5, 0); // anchor at feet → stands on the ground
+  sprite.frustumCulled = false;
+  const group = new THREE.Group();
+  group.add(sprite);
+  return { group, spriteMat, width };
 }
 
 // Shared soft round shadow for zombies.
@@ -523,32 +961,29 @@ const zombies = [];
 const corpses = []; // dying zombies animating their fall + fade
 
 class Zombie {
-  constructor(isBoss = false) {
-    this.isBoss = isBoss;
-    const pool = isBoss && bossSkins.length ? bossSkins : zombieSkins;
+  constructor(type = 'walker') {
+    const cfg = ZOMBIE_TYPES[type] || ZOMBIE_TYPES.walker;
+    this.type = type;
+    this.cfg = cfg;
+    this.isBoss = type === 'boss';
+
+    // Per-instance size jitter so reusing the same PNG still looks varied.
+    const sizeScale = this.isBoss ? 1 : 0.82 + Math.random() * 0.5;
+    this.height = cfg.height * sizeScale;
+
+    // Pick a PNG skin from the right pool (boss skins for bosses).
+    const pool = this.isBoss && bossSkins.length ? bossSkins : zombieSkins;
     const skin = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+    const model = buildZombieSpriteModel(skin, this.height);
 
-    const mat = new THREE.SpriteMaterial({
-      map: skin ? skin.texture : null,
-      transparent: true,
-      alphaTest: 0.25,
-      depthWrite: true,
-      fog: true,
-    });
-    this.sprite = new THREE.Sprite(mat);
+    this.group = model.group;
+    this.spriteMat = model.spriteMat;
+    this.group.frustumCulled = false;
+    this.group.userData.zombie = this;
 
-    const height = isBoss ? 4.0 : 2.1; // boss vs. normal human size
-    const aspect = skin ? skin.aspect : 0.55;
-    const width = height * aspect;
-    this.sprite.scale.set(width, height, 1);
-    this.sprite.center.set(0.5, 0); // anchor at feet → stands on the ground
-    this.sprite.frustumCulled = false; // always render, never culled at edges
-    this.sprite.userData.zombie = this;
-
-    // Body dimensions used by the manual hit test.
-    this.height = height;
-    this.width = width;
-    this.hitRadius = Math.max(0.7, width * 0.6); // generous, forgiving aim
+    // Body dimensions used by the manual hit test + shadow.
+    this.width = model.width;
+    this.hitRadius = Math.max(0.6, this.width * 0.7);
 
     // ground shadow blob
     this.shadow = new THREE.Mesh(
@@ -562,54 +997,44 @@ class Zombie {
       })
     );
     this.shadow.rotation.x = -Math.PI / 2;
-    this.shadow.scale.set(width * 1.5, width * 1.5, 1);
+    this.shadow.scale.set(this.width * 1.6, this.width * 1.6, 1);
     this.shadow.position.y = 0.04;
     this.shadow.frustumCulled = false;
 
-    this.maxHealth = isBoss ? 250 : 50;
+    this.maxHealth = cfg.health;
     this.health = this.maxHealth;
-    this.speed = isBoss ? 2.2 : 3.0 + Math.random() * 1.6;
-    this.damage = isBoss ? 22 : 9;
+    this.speed = cfg.minSpeed + Math.random() * (cfg.maxSpeed - cfg.minSpeed);
+    this.damage = cfg.damage;
     this.attackCooldown = 0;
     this.dead = false;
+    this.walkPhase = Math.random() * Math.PI * 2;
 
     // Floating health bar above the head (shown once the zombie takes damage).
-    this.barWidth = isBoss ? 3 : 1.4;
-    this.barY = height + (isBoss ? 0.6 : 0.35);
+    this.barWidth = this.isBoss ? 3 : 1.4;
+    this.barY = this.height + (this.isBoss ? 0.5 : 0.3);
     this.healthBarBg = makeBarSprite(0x101010, 0.7);
-    this.healthBarBg.scale.set(this.barWidth, isBoss ? 0.26 : 0.16, 1);
+    this.healthBarBg.scale.set(this.barWidth, this.isBoss ? 0.26 : 0.16, 1);
     this.healthBarFill = makeBarSprite(0x33dd33, 1);
     this.healthBarFill.center.set(0, 0.5); // left-anchored so it shrinks rightward
     this.healthBarFill.renderOrder = 1000;
-    this.healthBarFill.scale.set(this.barWidth, isBoss ? 0.2 : 0.12, 1);
+    this.healthBarFill.scale.set(this.barWidth, this.isBoss ? 0.2 : 0.12, 1);
     this.healthBarBg.visible = false;
     this.healthBarFill.visible = false;
     this.healthBarBg.frustumCulled = false;
     this.healthBarFill.frustumCulled = false;
 
-    // Debug locator dot, always visible above the head.
-    if (DEBUG_DOTS) {
-      this.debugDot = makeBarSprite(0xff0000, 1);
-      this.debugDot.scale.set(0.3, 0.3, 1);
-      this.debugDot.renderOrder = 1001;
-      this.debugDot.frustumCulled = false;
-    }
-
-    this.dying = false;
-
     this.spawn();
-    scene.add(this.sprite);
+    scene.add(this.group);
     scene.add(this.shadow);
     scene.add(this.healthBarBg);
     scene.add(this.healthBarFill);
-    if (this.debugDot) scene.add(this.debugDot);
     zombies.push(this);
   }
 
   spawn() {
     const p = controls.object.position;
-    const MIN = 15; // minimum spawn distance from the player
-    const MAX = 20;
+    const MIN = this.isBoss ? 26 : 20; // minimum spawn distance from the player
+    const MAX = this.isBoss ? 44 : 38;
     // Bias toward the open stretch of street ahead of the player so far
     // spawns don't collapse against the narrow side walls when clamped.
     const awayDir = p.z >= 0 ? -1 : 1;
@@ -639,33 +1064,36 @@ class Zombie {
         STREET_LENGTH / 2 - 4
       );
     }
-    this.sprite.position.set(x, 0, z);
+    this.group.position.set(x, 0, z);
     this.shadow.position.set(x, 0.04, z);
-    if (this.debugDot) this.debugDot.position.set(x, this.barY + 0.5, z);
   }
 
   update(delta, playerPos) {
     if (this.dead) return;
-    const pos = this.sprite.position;
+    const pos = this.group.position;
     const dx = playerPos.x - pos.x;
     const dz = playerPos.z - pos.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
 
-    const attackRange = this.isBoss ? 4.5 : 2.6;
+    const attackRange = this.isBoss ? 3.2 : 1.9;
     if (dist > attackRange) {
       pos.x += (dx / dist) * this.speed * delta;
       pos.z += (dz / dist) * this.speed * delta;
+      // Subtle shamble bob while moving (sprites always face the camera).
+      this.walkPhase += delta * this.speed * 2.4;
+      pos.y = Math.abs(Math.sin(this.walkPhase)) * 0.05;
     } else {
+      pos.y = 0;
       this.attackCooldown -= delta;
       if (this.attackCooldown <= 0) {
         damagePlayer(this.damage);
         this.attackCooldown = 1.0;
       }
     }
-    // Shadow + health bar + debug dot follow the zombie.
+
+    // Shadow + health bar follow the zombie.
     this.shadow.position.x = pos.x;
     this.shadow.position.z = pos.z;
-    if (this.debugDot) this.debugDot.position.set(pos.x, this.barY + 0.5, pos.z);
     this.updateBars();
   }
 
@@ -675,20 +1103,25 @@ class Zombie {
     this.healthBarBg.visible = show;
     this.healthBarFill.visible = show;
     if (!show) return;
-    const pos = this.sprite.position;
+    const pos = this.group.position;
     this.healthBarBg.position.set(pos.x, this.barY, pos.z);
     this.healthBarFill.position.set(pos.x - this.barWidth / 2, this.barY, pos.z);
     this.healthBarFill.scale.x = this.barWidth * frac;
     this.healthBarFill.material.color.setHSL(0.33 * frac, 0.9, 0.5); // green→red
   }
 
+  // Brief red hit flash (sprite colour tint).
+  flashHit() {
+    this.spriteMat.color.setRGB(1.6, 0.5, 0.5);
+    setTimeout(() => {
+      if (!this.dead) this.spriteMat.color.setRGB(1, 1, 1);
+    }, 70);
+  }
+
   hit(amount) {
     if (this.dead) return false;
     this.health -= amount;
-    this.sprite.material.color.setRGB(1.6, 0.5, 0.5);
-    setTimeout(() => {
-      if (!this.dead) this.sprite.material.color.setRGB(1, 1, 1);
-    }, 60);
+    this.flashHit();
     this.updateBars();
     if (this.health <= 0) {
       this.die();
@@ -698,15 +1131,14 @@ class Zombie {
   }
 
   // Begin dying: remove from active gameplay immediately (so it stops
-  // chasing/attacking and isn't shot again), burst blood, and hand the
-  // sprite to the corpse system to fall over and fade out.
+  // chasing/attacking and isn't shot again), burst blood, switch off the eye
+  // glow, and hand the body to the corpse system to topple over and fade out.
   die() {
     if (this.dead) return;
     this.dead = true;
 
-    // big blood splatter at chest height
-    const pos = this.sprite.position;
-    spawnBlood(new THREE.Vector3(pos.x, this.height * 0.55, pos.z), 22);
+    const pos = this.group.position;
+    spawnBlood(new THREE.Vector3(pos.x, this.height * 0.55, pos.z), this.isBoss ? 34 : 22);
 
     // strip non-corpse visuals
     scene.remove(this.shadow);
@@ -716,15 +1148,12 @@ class Zombie {
     this.shadow.geometry.dispose();
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
-    if (this.debugDot) {
-      scene.remove(this.debugDot);
-      this.debugDot.material.dispose();
-    }
 
-    // hand the body sprite to the falling-corpse animation
-    this.sprite.material.color.setRGB(1, 1, 1);
-    this.sprite.material.alphaTest = 0; // so it fades smoothly
-    corpses.push({ sprite: this.sprite, t: 0, duration: 0.7 });
+    // Hand the sprite to the corpse system to tip over and fade out.
+    this.spriteMat.color.setRGB(1, 1, 1);
+    this.spriteMat.alphaTest = 0; // fade smoothly instead of clipping
+    this.spriteMat.transparent = true;
+    corpses.push({ group: this.group, spriteMat: this.spriteMat, t: 0, duration: 0.7 });
 
     const i = zombies.indexOf(this);
     if (i !== -1) zombies.splice(i, 1);
@@ -733,33 +1162,31 @@ class Zombie {
   // Immediate, full removal with no animation (used when resetting).
   dispose() {
     this.dead = true;
-    scene.remove(this.sprite);
+    scene.remove(this.group);
     scene.remove(this.shadow);
     scene.remove(this.healthBarBg);
     scene.remove(this.healthBarFill);
-    if (this.debugDot) scene.remove(this.debugDot);
-    this.sprite.material.dispose();
+    this.spriteMat.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
-    if (this.debugDot) this.debugDot.material.dispose();
     const i = zombies.indexOf(this);
     if (i !== -1) zombies.splice(i, 1);
   }
 }
 
-// Animate falling corpses, then remove them.
+// Animate falling corpses (sprite tips over in place + fades), then remove them.
 function updateCorpses(delta) {
   for (let i = corpses.length - 1; i >= 0; i--) {
     const c = corpses[i];
     c.t += delta;
     const k = Math.min(1, c.t / c.duration);
-    c.sprite.material.rotation = -k * (Math.PI / 2); // fall over (pivot at feet)
-    c.sprite.material.opacity = 1 - k;
+    c.spriteMat.rotation = -k * (Math.PI / 2); // billboard tips over in place
+    c.spriteMat.opacity = 1 - k;
     if (k >= 1) {
-      scene.remove(c.sprite);
-      c.sprite.material.dispose();
+      scene.remove(c.group);
+      c.spriteMat.dispose();
       corpses.splice(i, 1);
     }
   }
@@ -781,9 +1208,13 @@ function startWave(n) {
   game.wave = n;
   const count = 4 + n * 2;
   game.waveRemaining = count;
+  // Runners grow more common as the waves climb; a boss caps wave 3+.
+  const runnerChance = Math.min(0.5, 0.12 + n * 0.06);
   for (let i = 0; i < count; i++) {
-    const isBoss = n >= 3 && i === count - 1;
-    new Zombie(isBoss);
+    let type = 'walker';
+    if (n >= 3 && i === count - 1) type = 'boss';
+    else if (Math.random() < runnerChance) type = 'runner';
+    new Zombie(type);
   }
   updateHud();
 }
@@ -842,8 +1273,8 @@ function nearestZombieHit(origin, dir, range) {
   let best = null;
   for (const z of zombies) {
     if (z.dead) continue;
-    const px = z.sprite.position.x;
-    const pz = z.sprite.position.z;
+    const px = z.group.position.x;
+    const pz = z.group.position.z;
     const R = z.hitRadius;
     const steps = Math.max(3, Math.round(z.height / 0.5));
     for (let s = 0; s <= steps; s++) {
@@ -914,7 +1345,7 @@ function tryFire() {
     rec.point = hit.point.clone();
     rec.killed = rec.killed || killed;
     dealt.set(z, rec);
-    if (killed) onZombieKilled(z.isBoss ? 500 : 100);
+    if (killed) onZombieKilled(z.cfg.points);
   }
   for (const [, rec] of dealt) {
     spawnBlood(rec.point);
@@ -1062,8 +1493,8 @@ function resetGame() {
   zombies.length = 0;
   // clear any falling corpses
   for (const c of corpses) {
-    scene.remove(c.sprite);
-    c.sprite.material.dispose();
+    scene.remove(c.group);
+    c.spriteMat.dispose();
   }
   corpses.length = 0;
   game.running = false;
@@ -1090,12 +1521,12 @@ function endGame() {
   gameover.classList.remove('hidden');
 }
 
-// Preload cut-out skins, then spawn the first wave.
+// PNG sprites must be cut out and loaded before any zombie can spawn.
+updateHud();
 preloadSkins().then(() => {
   startWave(1);
   updateHud();
 });
-updateHud();
 
 // ---------------------------------------------------------------------------
 // Effects: blood splatter (3D sprites) + floating damage numbers (DOM)
@@ -1238,6 +1669,8 @@ function animate() {
 
   updateBlood(delta);
   updateCorpses(delta);
+  updateFires(delta);
+  updateAtmosphere(delta);
 
   if (muzzleLight.intensity > 0) {
     muzzleLight.intensity = Math.max(0, muzzleLight.intensity - delta * 30);

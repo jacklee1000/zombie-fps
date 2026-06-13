@@ -54,15 +54,13 @@ export const images = {
   all: byName,
 
   // Walking-enemy sprites (full-body zombies).
+  // NOTE: the soldier (front + riot-shield) and police/cop sprites are
+  // intentionally excluded — they were blocking the player's view.
   zombies: [
-    find('zombie', 'soldier', 'front'),
-    find('riot', 'shield'),
-    find('police'),
     find('nurse'),
     find('scientist'),
     find('biker'),
     find('running'),
-    find('crawling'),
   ].filter(Boolean),
 
   // Tougher, larger enemies.
