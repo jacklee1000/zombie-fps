@@ -1566,18 +1566,201 @@ document.addEventListener('keydown', onKeyDown);
 document.addEventListener('keyup', onKeyUp);
 
 // ---------------------------------------------------------------------------
+// Touch controls (mobile) — joystick to move, drag to look, buttons to act.
+// Each control owns its own DOM element and tracks touches by identifier so
+// moving + looking + firing can all happen at once (multi-touch).
+// ---------------------------------------------------------------------------
+const PI_2 = Math.PI / 2;
+const _lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+// --- Look: drag anywhere on the look layer to aim (touch = mouse look). ---
+const lookLayer = document.getElementById('touch-look');
+const LOOK_SENS = 0.0045; // radians per pixel dragged
+let lookId = null;
+let lookX = 0;
+let lookY = 0;
+
+if (lookLayer) {
+  lookLayer.addEventListener(
+    'touchstart',
+    (e) => {
+      e.preventDefault();
+      if (lookId !== null) return; // already tracking a look finger
+      const t = e.changedTouches[0];
+      lookId = t.identifier;
+      lookX = t.clientX;
+      lookY = t.clientY;
+    },
+    { passive: false }
+  );
+  lookLayer.addEventListener(
+    'touchmove',
+    (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier !== lookId) continue;
+        const dx = t.clientX - lookX;
+        const dy = t.clientY - lookY;
+        lookX = t.clientX;
+        lookY = t.clientY;
+        _lookEuler.setFromQuaternion(camera.quaternion);
+        _lookEuler.y -= dx * LOOK_SENS; // yaw
+        _lookEuler.x -= dy * LOOK_SENS; // pitch
+        _lookEuler.x = Math.max(-PI_2 + 0.05, Math.min(PI_2 - 0.05, _lookEuler.x));
+        camera.quaternion.setFromEuler(_lookEuler);
+      }
+    },
+    { passive: false }
+  );
+  const endLook = (e) => {
+    for (const t of e.changedTouches) if (t.identifier === lookId) lookId = null;
+  };
+  lookLayer.addEventListener('touchend', endLook);
+  lookLayer.addEventListener('touchcancel', endLook);
+}
+
+// --- Joystick: drives the existing WASD moveState (8-directional). ---
+const joystick = document.getElementById('joystick');
+const joyKnob = document.getElementById('joystick-knob');
+const JOY_RADIUS = 50; // px of knob travel
+const JOY_DEAD = 0.32; // fraction of travel before a direction registers
+let joyId = null;
+let joyCx = 0;
+let joyCy = 0;
+
+function setJoyVector(dx, dy) {
+  const len = Math.hypot(dx, dy) || 1;
+  const clamped = Math.min(len, JOY_RADIUS);
+  const nx = (dx / len) * clamped;
+  const ny = (dy / len) * clamped;
+  if (joyKnob) joyKnob.style.transform = `translate(${nx}px, ${ny}px)`;
+  const fx = nx / JOY_RADIUS;
+  const fy = ny / JOY_RADIUS;
+  moveState.left = fx < -JOY_DEAD;
+  moveState.right = fx > JOY_DEAD;
+  moveState.forward = fy < -JOY_DEAD; // up on screen = forward
+  moveState.back = fy > JOY_DEAD;
+}
+
+function resetJoy() {
+  if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
+  moveState.forward = moveState.back = moveState.left = moveState.right = false;
+}
+
+if (joystick) {
+  joystick.addEventListener(
+    'touchstart',
+    (e) => {
+      e.preventDefault();
+      if (joyId !== null) return;
+      const t = e.changedTouches[0];
+      joyId = t.identifier;
+      const r = joystick.getBoundingClientRect();
+      joyCx = r.left + r.width / 2;
+      joyCy = r.top + r.height / 2;
+      setJoyVector(t.clientX - joyCx, t.clientY - joyCy);
+    },
+    { passive: false }
+  );
+  joystick.addEventListener(
+    'touchmove',
+    (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier === joyId) setJoyVector(t.clientX - joyCx, t.clientY - joyCy);
+      }
+    },
+    { passive: false }
+  );
+  const endJoy = (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyId) {
+        joyId = null;
+        resetJoy();
+      }
+    }
+  };
+  joystick.addEventListener('touchend', endJoy);
+  joystick.addEventListener('touchcancel', endJoy);
+}
+
+// --- Action buttons (fire / reload / weapon switch). ---
+// Bind a button element to press/release callbacks with visual feedback.
+function bindTouchButton(id, onPress, onRelease) {
+  const elBtn = document.getElementById(id);
+  if (!elBtn) return;
+  elBtn.addEventListener(
+    'touchstart',
+    (e) => {
+      e.preventDefault();
+      elBtn.classList.add('pressed');
+      onPress();
+    },
+    { passive: false }
+  );
+  const release = (e) => {
+    if (e) e.preventDefault();
+    elBtn.classList.remove('pressed');
+    if (onRelease) onRelease();
+  };
+  elBtn.addEventListener('touchend', release, { passive: false });
+  elBtn.addEventListener('touchcancel', release, { passive: false });
+}
+
+bindTouchButton(
+  'btn-fire',
+  () => {
+    if (!game.running) return;
+    firing = true; // auto weapons keep firing in the loop while held
+    tryFire(); // immediate shot on press
+  },
+  () => {
+    firing = false;
+  }
+);
+bindTouchButton('btn-reload', () => reload());
+bindTouchButton('btn-weapon1', () => switchWeapon('shotgun'));
+bindTouchButton('btn-weapon2', () => switchWeapon('machinegun'));
+
+// ---------------------------------------------------------------------------
 // Overlays / lifecycle
 // ---------------------------------------------------------------------------
 const overlay = document.getElementById('overlay');
 const gameover = document.getElementById('gameover');
-document.getElementById('start-btn').addEventListener('click', () => controls.lock());
+
+// Touch devices can't use pointer lock, so they play in "mobile" mode: the game
+// runs without a locked pointer and is driven by the on-screen touch controls.
+// A real phone/tablet has a coarse primary pointer and no hover. This avoids
+// forcing mobile mode (and disabling mouse-look) on touch-capable laptops.
+const isTouch =
+  window.matchMedia('(pointer: coarse)').matches &&
+  window.matchMedia('(hover: none)').matches;
+let mobileActive = false;
+const touchUI = document.getElementById('touch-ui');
+
+// True whenever gameplay should be live (desktop: pointer locked; mobile: active).
+const playActive = () => controls.isLocked || mobileActive;
+
+function startFromOverlay() {
+  if (isTouch) {
+    mobileActive = true;
+    touchUI.classList.remove('hidden');
+    beginPlay();
+  } else {
+    controls.lock();
+  }
+}
+
+document.getElementById('start-btn').addEventListener('click', startFromOverlay);
 document.getElementById('restart-btn').addEventListener('click', () => {
   resetGame();
-  controls.lock();
+  startFromOverlay();
 });
 
 let sessionStarted = false; // so we sting once per game, not on pause/resume
-controls.addEventListener('lock', () => {
+
+// Reveal the HUD and start a play session (shared by desktop lock + mobile start).
+function beginPlay() {
   overlay.classList.add('hidden');
   gameover.classList.add('hidden');
   el.hud.classList.remove('hidden');
@@ -1588,7 +1771,9 @@ controls.addEventListener('lock', () => {
     sessionStarted = true;
   }
   updateViewmodel();
-});
+}
+
+controls.addEventListener('lock', beginPlay);
 controls.addEventListener('unlock', () => {
   el.viewmodel.classList.add('hidden');
   if (game.running && game.health > 0) overlay.classList.remove('hidden');
@@ -1620,6 +1805,8 @@ function resetGame() {
 
 function endGame() {
   game.running = false;
+  mobileActive = false;
+  touchUI.classList.add('hidden');
   audio.stopMusic();
   audio.gameOver();
   controls.unlock();
@@ -1738,7 +1925,7 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.05);
 
-  if (game.running && controls.isLocked) {
+  if (game.running && playActive()) {
     velocity.x -= velocity.x * 10 * delta;
     velocity.z -= velocity.z * 10 * delta;
     direction.z = Number(moveState.forward) - Number(moveState.back);

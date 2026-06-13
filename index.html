@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <title>Zombie FPS — Chapter 1: City Streets</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -67,8 +70,28 @@
           <li><b>R</b> — Reload</li>
         </ul>
         <button id="start-btn">CLICK TO PLAY</button>
-        <p class="tiny">(Click locks the mouse. Press ESC to release.)</p>
+        <p class="tiny desktop-hint">(Click locks the mouse. Press ESC to release.)</p>
+        <p class="tiny touch-hint">
+          Left stick to move · drag screen to look · FIRE to shoot · R to reload · 1 / 2 to swap weapons
+        </p>
       </div>
+    </div>
+
+    <!-- Mobile touch controls (shown only while playing on a touch device) -->
+    <div id="touch-ui" class="hidden">
+      <!-- Full-screen layer: drag here to look around -->
+      <div id="touch-look"></div>
+
+      <!-- LEFT: virtual movement joystick -->
+      <div id="joystick">
+        <div id="joystick-knob"></div>
+      </div>
+
+      <!-- RIGHT: action buttons -->
+      <div id="btn-weapon1" class="touch-btn small">1</div>
+      <div id="btn-weapon2" class="touch-btn small">2</div>
+      <div id="btn-reload" class="touch-btn medium">R</div>
+      <div id="btn-fire" class="touch-btn fire">FIRE</div>
     </div>
 
     <!-- Game over overlay -->
