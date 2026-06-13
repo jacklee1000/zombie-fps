@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zombie FPS — Chapter 1: City Streets</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- 3D canvas is appended here by the renderer -->
+
+    <!-- Crosshair -->
+    <div id="crosshair">+</div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div id="health-wrap">
+        <div id="health-label">HEALTH</div>
+        <div id="health-bar-bg"><div id="health-bar"></div></div>
+      </div>
+
+      <div id="ammo-wrap">
+        <img id="weapon-img" alt="weapon" />
+        <div id="ammo-text"><span id="ammo-current">0</span><span id="ammo-sep">/</span><span id="ammo-reserve">0</span></div>
+        <div id="weapon-name">SHOTGUN</div>
+      </div>
+
+      <div id="score-wrap">
+        <div class="score-line">KILLS <span id="kills">0</span></div>
+        <div class="score-line">WAVE <span id="wave">1</span></div>
+      </div>
+
+      <div id="hint">[1] Shotgun &nbsp; [2] Machine Gun &nbsp; [R] Reload &nbsp; [WASD] Move &nbsp; [Mouse] Aim &nbsp; [Click] Fire</div>
+    </div>
+
+    <!-- Damage flash overlay -->
+    <div id="damage-flash"></div>
+
+    <!-- Start / instructions overlay -->
+    <div id="overlay">
+      <div id="overlay-box">
+        <h1>ZOMBIE FPS</h1>
+        <h2>Chapter 1 — City Streets</h2>
+        <p class="story">
+          The outbreak swept the city in days. You're the last unit still broadcasting.
+          Hold the street, thin the horde, survive the waves.
+        </p>
+        <ul class="controls">
+          <li><b>WASD</b> — Move</li>
+          <li><b>Mouse</b> — Look</li>
+          <li><b>Left Click</b> — Fire</li>
+          <li><b>1 / 2</b> — Shotgun / Machine Gun</li>
+          <li><b>R</b> — Reload</li>
+        </ul>
+        <button id="start-btn">CLICK TO PLAY</button>
+        <p class="tiny">(Click locks the mouse. Press ESC to release.)</p>
+      </div>
+    </div>
+
+    <!-- Game over overlay -->
+    <div id="gameover" class="hidden">
+      <div id="overlay-box">
+        <h1 class="dead">YOU DIED</h1>
+        <p class="story">The street goes quiet. The horde moves on.</p>
+        <p id="final-stats"></p>
+        <button id="restart-btn">RETRY</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
