@@ -163,6 +163,16 @@ canvas {
   font-weight: bold;
 }
 
+#mute-state {
+  position: absolute;
+  left: 20px;
+  bottom: 46px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(180, 210, 220, 0.75);
+  text-shadow: 0 0 6px #000;
+}
+
 #hint {
   position: absolute;
   bottom: 8px;

@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { images } from './assets.js';
+import { audio } from './audio.js';
 import './style.css';
+
+// Synthesize all sounds up front (offline rendering; needs no user gesture).
+audio.init();
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -1008,6 +1012,7 @@ class Zombie {
     this.attackCooldown = 0;
     this.dead = false;
     this.walkPhase = Math.random() * Math.PI * 2;
+    this.groanTimer = 2 + Math.random() * 6; // seconds until the next groan
 
     // Floating health bar above the head (shown once the zombie takes damage).
     this.barWidth = this.isBoss ? 3 : 1.4;
@@ -1091,6 +1096,13 @@ class Zombie {
       }
     }
 
+    // Random approaching groans, attenuated by distance.
+    this.groanTimer -= delta;
+    if (this.groanTimer <= 0) {
+      audio.groan(1 - Math.min(1, dist / 40));
+      this.groanTimer = 4 + Math.random() * 6;
+    }
+
     // Shadow + health bar follow the zombie.
     this.shadow.position.x = pos.x;
     this.shadow.position.z = pos.z;
@@ -1138,6 +1150,7 @@ class Zombie {
     this.dead = true;
 
     const pos = this.group.position;
+    audio.death();
     spawnBlood(new THREE.Vector3(pos.x, this.height * 0.55, pos.z), this.isBoss ? 34 : 22);
 
     // strip non-corpse visuals
@@ -1208,6 +1221,7 @@ function startWave(n) {
   game.wave = n;
   const count = 4 + n * 2;
   game.waveRemaining = count;
+  if (game.running) audio.waveStart(); // dramatic sting for waves mid-game
   // Runners grow more common as the waves climb; a boss caps wave 3+.
   const runnerChance = Math.min(0.5, 0.12 + n * 0.06);
   for (let i = 0; i < count; i++) {
@@ -1256,6 +1270,7 @@ function reload() {
   const ammo = loadout[currentWeaponKey];
   if (reloading || ammo.mag >= w.magSize || ammo.reserve <= 0) return;
   reloading = true;
+  audio.reload();
   updateHud();
   setTimeout(() => {
     const take = Math.min(w.magSize - ammo.mag, ammo.reserve);
@@ -1312,11 +1327,14 @@ function tryFire() {
   const w = currentWeapon();
   const ammo = loadout[currentWeaponKey];
   if (ammo.mag <= 0) {
+    audio.empty();
+    fireTimer = 0.2; // throttle repeated empty clicks on held auto-fire
     reload();
     return;
   }
   ammo.mag -= 1;
   fireTimer = w.fireDelay;
+  audio.shot(currentWeaponKey);
 
   muzzleLight.position.copy(controls.object.position);
   muzzleLight.intensity = 5;
@@ -1363,6 +1381,7 @@ let flashTimer = 0;
 function damagePlayer(amount) {
   if (!game.running) return;
   game.health = Math.max(0, game.health - amount);
+  audio.playerHit();
   damageFlash.classList.add('show');
   flashTimer = 0.15;
   updateHud();
@@ -1384,6 +1403,7 @@ const el = {
   kills: document.getElementById('kills'),
   wave: document.getElementById('wave'),
   score: document.getElementById('score'),
+  muteState: document.getElementById('mute-state'),
 };
 
 // First-person viewmodel state (only active once a viewmodel image exists).
@@ -1445,6 +1465,11 @@ function onKeyDown(e) {
     case 'Digit1': switchWeapon('shotgun'); break;
     case 'Digit2': switchWeapon('machinegun'); break;
     case 'KeyR': reload(); break;
+    case 'KeyM': {
+      const muted = audio.toggleMusicMute();
+      if (el.muteState) el.muteState.textContent = (muted ? '♪ MUSIC OFF' : '♪ MUSIC ON');
+      break;
+    }
     case 'Space':
       e.preventDefault(); // stop page scroll
       if (!game.running) break;
@@ -1476,11 +1501,17 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   controls.lock();
 });
 
+let sessionStarted = false; // so we sting once per game, not on pause/resume
 controls.addEventListener('lock', () => {
   overlay.classList.add('hidden');
   gameover.classList.add('hidden');
   el.hud.classList.remove('hidden');
   game.running = true;
+  audio.startMusic(); // resumes the Web Audio context on this user gesture
+  if (!sessionStarted) {
+    audio.waveStart();
+    sessionStarted = true;
+  }
   updateViewmodel();
 });
 controls.addEventListener('unlock', () => {
@@ -1489,6 +1520,7 @@ controls.addEventListener('unlock', () => {
 });
 
 function resetGame() {
+  sessionStarted = false; // fresh game → sting again on next lock
   for (const z of [...zombies]) z.dispose();
   zombies.length = 0;
   // clear any falling corpses
@@ -1513,6 +1545,8 @@ function resetGame() {
 
 function endGame() {
   game.running = false;
+  audio.stopMusic();
+  audio.gameOver();
   controls.unlock();
   el.hud.classList.add('hidden');
   el.viewmodel.classList.add('hidden');
@@ -1623,6 +1657,7 @@ window.addEventListener('resize', () => {
 // Loop
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
+let footstepTimer = 0; // cadence for walking footstep sounds
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1646,6 +1681,18 @@ function animate() {
 
     if (fireTimer > 0) fireTimer -= delta;
     if (firing && currentWeapon().auto) tryFire();
+
+    // Footsteps while moving (WASD).
+    const walking = moveState.forward || moveState.back || moveState.left || moveState.right;
+    if (walking) {
+      footstepTimer -= delta;
+      if (footstepTimer <= 0) {
+        audio.footstep();
+        footstepTimer = 0.34;
+      }
+    } else {
+      footstepTimer = 0; // step immediately when movement resumes
+    }
 
     // Viewmodel sway: walk-bob while moving + recoil kick after firing.
     if (viewmodelActive) {
