@@ -655,7 +655,7 @@ const loadout = {
 let currentWeaponKey = 'shotgun';
 let fireTimer = 0;
 let reloading = false;
-let mouseDown = false;
+let firing = false; // true while SPACE is held
 
 const currentWeapon = () => WEAPONS[currentWeaponKey];
 
@@ -808,6 +808,12 @@ function onKeyDown(e) {
     case 'Digit1': switchWeapon('shotgun'); break;
     case 'Digit2': switchWeapon('machinegun'); break;
     case 'KeyR': reload(); break;
+    case 'Space':
+      e.preventDefault(); // stop page scroll
+      if (!game.running) break;
+      firing = true;
+      if (!e.repeat) tryFire(); // immediate shot on press
+      break;
   }
 }
 function onKeyUp(e) {
@@ -816,19 +822,11 @@ function onKeyUp(e) {
     case 'KeyS': case 'ArrowDown': moveState.back = false; break;
     case 'KeyA': case 'ArrowLeft': moveState.left = false; break;
     case 'KeyD': case 'ArrowRight': moveState.right = false; break;
+    case 'Space': firing = false; break;
   }
 }
 document.addEventListener('keydown', onKeyDown);
 document.addEventListener('keyup', onKeyUp);
-
-renderer.domElement.addEventListener('mousedown', () => {
-  if (!game.running) return;
-  mouseDown = true;
-  tryFire();
-});
-window.addEventListener('mouseup', () => {
-  mouseDown = false;
-});
 
 // ---------------------------------------------------------------------------
 // Overlays / lifecycle
@@ -921,7 +919,7 @@ function animate() {
     p.y = PLAYER_EYE_HEIGHT;
 
     if (fireTimer > 0) fireTimer -= delta;
-    if (mouseDown && currentWeapon().auto) tryFire();
+    if (firing && currentWeapon().auto) tryFire();
 
     // Viewmodel sway: walk-bob while moving + recoil kick after firing.
     if (viewmodelActive) {
