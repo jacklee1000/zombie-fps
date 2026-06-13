@@ -7,6 +7,7 @@
 // so Howler handles playback, looping, per-sound volume, and global mute.
 // ---------------------------------------------------------------------------
 import { Howl, Howler } from 'howler';
+import { images } from './assets.js';
 
 const SR = 44100;
 
@@ -251,16 +252,22 @@ class AudioEngine {
     if (this.ready || this._initing) return;
     this._initing = true;
     Howler.volume(0.9); // master
+    const files = (images && images.sounds) || {};
     const entries = await Promise.all(
-      Object.entries(SYNTHS).map(async ([key, synth]) => [key, await synth()])
+      Object.entries(SYNTHS).map(async ([key, synth]) =>
+        // Prefer a real audio file for this category; otherwise synthesize one.
+        files[key] ? [key, { url: files[key] }] : [key, { buffer: await synth() }]
+      )
     );
-    for (const [key, buffer] of entries) {
-      this.howls[key] = new Howl({
-        src: [bufferToWavURI(buffer)],
-        format: ['wav'],
-        volume: VOL[key],
-        loop: key === 'music',
-      });
+    for (const [key, src] of entries) {
+      const opts = { volume: VOL[key], loop: key === 'music' };
+      if (src.url) {
+        opts.src = [src.url]; // real file — let Howler infer format from the URL
+      } else {
+        opts.src = [bufferToWavURI(src.buffer)];
+        opts.format = ['wav'];
+      }
+      this.howls[key] = new Howl(opts);
     }
     this.ready = true;
   }

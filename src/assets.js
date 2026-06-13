@@ -13,6 +13,20 @@ for (const [path, url] of Object.entries(modules)) {
   byName[name] = url;
 }
 
+// Pull in any audio files dropped into the project root too.
+const audioByName = {};
+for (const [path, url] of Object.entries(
+  import.meta.glob('../*.{mp3,wav,ogg,m4a}', { eager: true, query: '?url', import: 'default' })
+)) {
+  audioByName[path.split('/').pop()] = url;
+}
+function findAudio(...keywords) {
+  const key = Object.keys(audioByName).find((name) =>
+    keywords.some((k) => name.toLowerCase().includes(k.toLowerCase()))
+  );
+  return key ? audioByName[key] : null;
+}
+
 // Find the first filename containing ALL given keywords (case-insensitive).
 function find(...keywords) {
   const key = Object.keys(byName).find((name) =>
@@ -52,6 +66,18 @@ function findViewmodel(...weaponWords) {
 // Categorised assets used by the game.
 export const images = {
   all: byName,
+
+  // Optional real audio files (auto-detected by filename keyword). When a
+  // category has a file the audio engine uses it; otherwise it synthesizes one.
+  sounds: {
+    music: findAudio('music', 'theme', 'ambient', 'background', 'bgm', 'horror'),
+    shotgun: findAudio('shotgun', 'gunshot', 'shot', 'boom'),
+    machinegun: findAudio('machinegun', 'machine', 'rifle', 'auto'),
+    reload: findAudio('reload'),
+    groan: findAudio('groan', 'moan'),
+    death: findAudio('death', 'splat', 'scream'),
+    hit: findAudio('hit', 'grunt', 'hurt'),
+  },
 
   // Walking-enemy sprites (full-body zombies).
   // NOTE: the soldier (front + riot-shield) and police/cop sprites are

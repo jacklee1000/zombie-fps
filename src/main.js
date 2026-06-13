@@ -912,24 +912,69 @@ async function preloadSkins() {
   skinsReady = true;
 }
 
-// A billboard zombie: one camera-facing PNG sprite, anchored at the feet.
+// A billboard zombie built for maximum visibility: a red locator marker and a
+// green glow halo behind the camera-facing PNG sprite, plus a bright white
+// PointLight that lights the ground around it (sprites themselves are unlit).
 function buildZombieSpriteModel(skin, height) {
+  const aspect = skin ? skin.aspect : 0.55;
+  const width = height * aspect;
+  const group = new THREE.Group();
+
+  // Red locator marker — guaranteed-visible backing behind the figure.
+  const markerMat = new THREE.SpriteMaterial({
+    map: markerTexture,
+    transparent: true,
+    opacity: 0.45,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  });
+  const marker = new THREE.Sprite(markerMat);
+  marker.center.set(0.5, 0.5);
+  marker.position.y = height * 0.5;
+  marker.scale.set(width * 1.9, height * 1.15, 1);
+  marker.renderOrder = 1;
+  marker.frustumCulled = false;
+  group.add(marker);
+
+  // Green-white glow halo (outline/glow around the sprite).
+  const glowMat = new THREE.SpriteMaterial({
+    map: glowTexture,
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  });
+  const glow = new THREE.Sprite(glowMat);
+  glow.center.set(0.5, 0.5);
+  glow.position.y = height * 0.55;
+  glow.scale.set(width * 1.55, height * 1.3, 1);
+  glow.renderOrder = 2;
+  glow.frustumCulled = false;
+  group.add(glow);
+
+  // Main zombie sprite.
   const spriteMat = new THREE.SpriteMaterial({
     map: skin ? skin.texture : null,
     transparent: true,
-    alphaTest: 0.25,
-    depthWrite: true,
+    alphaTest: 0.1,
+    depthWrite: false,
     fog: true,
   });
   const sprite = new THREE.Sprite(spriteMat);
-  const aspect = skin ? skin.aspect : 0.55;
-  const width = height * aspect;
   sprite.scale.set(width, height, 1);
   sprite.center.set(0.5, 0); // anchor at feet → stands on the ground
   sprite.frustumCulled = false;
-  const group = new THREE.Group();
+  sprite.renderOrder = 3;
   group.add(sprite);
-  return { group, spriteMat, width };
+
+  // Bright white locator light — lights nearby ground/props to flag position.
+  const light = new THREE.PointLight(0xffffff, 2, 10, 2);
+  light.position.set(0, height * 0.6, 0);
+  group.add(light);
+
+  return { group, spriteMat, markerMat, glowMat, marker, glow, light, width };
 }
 
 // Shared soft round shadow for zombies.
@@ -945,6 +990,22 @@ function makeShadowTexture() {
   return new THREE.CanvasTexture(c);
 }
 const shadowTexture = makeShadowTexture();
+
+// Soft radial sprite texture (for zombie glow halos + locator markers).
+function makeRadialTexture(r, g, b) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(64, 64, 2, 64, 64, 64);
+  grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+  grad.addColorStop(0.5, `rgba(${r},${g},${b},0.55)`);
+  grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+const glowTexture = makeRadialTexture(170, 255, 170); // green-white halo
+const markerTexture = makeRadialTexture(255, 40, 40); // red locator marker
 
 // A flat, camera-facing bar sprite (used for zombie health bars).
 function makeBarSprite(color, opacity) {
@@ -971,9 +1032,12 @@ class Zombie {
     this.cfg = cfg;
     this.isBoss = type === 'boss';
 
-    // Per-instance size jitter so reusing the same PNG still looks varied.
+    // Per-instance size jitter, then a big visibility boost (~3x) so sprites
+    // read clearly against the dark, foggy street. Bosses are huge already, so
+    // they get a smaller multiplier.
     const sizeScale = this.isBoss ? 1 : 0.82 + Math.random() * 0.5;
-    this.height = cfg.height * sizeScale;
+    const visScale = this.isBoss ? 1.8 : 3;
+    this.height = cfg.height * sizeScale * visScale;
 
     // Pick a PNG skin from the right pool (boss skins for bosses).
     const pool = this.isBoss && bossSkins.length ? bossSkins : zombieSkins;
@@ -982,6 +1046,11 @@ class Zombie {
 
     this.group = model.group;
     this.spriteMat = model.spriteMat;
+    this.markerMat = model.markerMat;
+    this.glowMat = model.glowMat;
+    this.marker = model.marker;
+    this.glow = model.glow;
+    this.zLight = model.light;
     this.group.frustumCulled = false;
     this.group.userData.zombie = this;
 
@@ -1162,6 +1231,13 @@ class Zombie {
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
 
+    // Kill the locator visuals — a corpse shouldn't glow or be flagged.
+    this.zLight.intensity = 0;
+    this.group.remove(this.marker);
+    this.group.remove(this.glow);
+    this.markerMat.dispose();
+    this.glowMat.dispose();
+
     // Hand the sprite to the corpse system to tip over and fade out.
     this.spriteMat.color.setRGB(1, 1, 1);
     this.spriteMat.alphaTest = 0; // fade smoothly instead of clipping
@@ -1180,6 +1256,8 @@ class Zombie {
     scene.remove(this.healthBarBg);
     scene.remove(this.healthBarFill);
     this.spriteMat.dispose();
+    this.markerMat.dispose();
+    this.glowMat.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
     this.healthBarBg.material.dispose();
