@@ -77,9 +77,9 @@ const camera = new THREE.PerspectiveCamera(
 // ---------------------------------------------------------------------------
 // Lighting — bright, so everything is clearly visible
 // ---------------------------------------------------------------------------
-scene.add(new THREE.AmbientLight(0x8090c8, 0.5));
-scene.add(new THREE.HemisphereLight(0x4a5694, 0x20242c, 0.45));
-const moon = new THREE.DirectionalLight(0xaec4f0, 0.7);
+scene.add(new THREE.AmbientLight(0x8090c8, 0.7));
+scene.add(new THREE.HemisphereLight(0x4a5694, 0x20242c, 0.6));
+const moon = new THREE.DirectionalLight(0xaec4f0, 0.75);
 moon.position.set(-40, 90, -30);
 scene.add(moon);
 
@@ -250,6 +250,11 @@ const paperTexture = makePaperTexture();
 // ---------------------------------------------------------------------------
 const fires = [];
 
+// Scene light budget: ambient + hemisphere + moon (3) + muzzle (1) leave room
+// for at most this many flickering fire lights, keeping total lights <= 10.
+// Extra fires still show flames (cheap sprites), just without a dynamic light.
+let fireLightBudget = 6;
+
 function spawnFire(pos, scale = 1) {
   const group = new THREE.Group();
   group.position.copy(pos);
@@ -270,9 +275,13 @@ function spawnFire(pos, scale = 1) {
     group.add(s);
     flames.push({ s, base: sz, phase: Math.random() * Math.PI * 2 });
   }
-  const light = new THREE.PointLight(0xff7a1e, 3 * scale, 13 * scale, 2);
-  light.position.y = 1.2 * scale;
-  group.add(light);
+  let light = null;
+  if (fireLightBudget > 0) {
+    light = new THREE.PointLight(0xff7a1e, 3 * scale, 13 * scale, 2);
+    light.position.y = 1.2 * scale;
+    group.add(light);
+    fireLightBudget -= 1;
+  }
   scene.add(group);
   fires.push({ flames, light, t: 0 });
 }
@@ -285,7 +294,7 @@ function updateFires(delta) {
       fl.s.scale.set(fl.base * k, fl.base * 1.6 * k, 1);
       fl.s.material.opacity = 0.7 + Math.random() * 0.3;
     }
-    f.light.intensity = 2.4 + Math.sin(f.t * 12) * 0.8 + Math.random() * 0.6;
+    if (f.light) f.light.intensity = 2.4 + Math.sin(f.t * 12) * 0.8 + Math.random() * 0.6;
   }
 }
 
@@ -704,7 +713,7 @@ function addStreetLights() {
   const headMat = new THREE.MeshStandardMaterial({
     color: 0x111111,
     emissive: 0xffcf8a,
-    emissiveIntensity: 2.2,
+    emissiveIntensity: 3.2, // brighter glow now that lamps have no PointLight
   });
 
   for (const side of [-1, 1]) {
@@ -722,10 +731,8 @@ function addStreetLights() {
       const head = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.45, 0.9), headMat);
       head.position.set(x - side * 2.1, 8.85, z);
       scene.add(head);
-
-      const light = new THREE.PointLight(0xffd9a0, 14, 26, 2);
-      light.position.set(x - side * 2.1, 8.4, z);
-      scene.add(light);
+      // NOTE: no PointLight per lamp — emissive heads + ambient light the street
+      // instead, keeping the scene light count low (avoids the freeze).
     }
   }
 }
@@ -912,49 +919,33 @@ async function preloadSkins() {
   skinsReady = true;
 }
 
-// A billboard zombie built for maximum visibility: a red locator marker and a
-// green glow halo behind the camera-facing PNG sprite, plus a bright white
-// PointLight that lights the ground around it (sprites themselves are unlit).
+// A billboard zombie built for maximum visibility WITHOUT any per-zombie lights
+// (those were killing performance). A bright, solid RED circle sits behind the
+// camera-facing PNG sprite, so the zombie is always visible even if the sprite
+// art is mostly transparent.
 function buildZombieSpriteModel(skin, height) {
   const aspect = skin ? skin.aspect : 0.55;
   const width = height * aspect;
   const group = new THREE.Group();
 
-  // Red locator marker — guaranteed-visible backing behind the figure.
+  // Solid red backing circle — guaranteed visibility, no lighting cost.
   const markerMat = new THREE.SpriteMaterial({
-    map: markerTexture,
+    map: discTexture,
+    color: 0xff2a2a,
     transparent: true,
-    opacity: 0.45,
+    opacity: 0.9,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     fog: false,
   });
   const marker = new THREE.Sprite(markerMat);
   marker.center.set(0.5, 0.5);
   marker.position.y = height * 0.5;
-  marker.scale.set(width * 1.9, height * 1.15, 1);
+  marker.scale.set(width * 1.7, height * 1.05, 1);
   marker.renderOrder = 1;
   marker.frustumCulled = false;
   group.add(marker);
 
-  // Green-white glow halo (outline/glow around the sprite).
-  const glowMat = new THREE.SpriteMaterial({
-    map: glowTexture,
-    transparent: true,
-    opacity: 0.6,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    fog: false,
-  });
-  const glow = new THREE.Sprite(glowMat);
-  glow.center.set(0.5, 0.5);
-  glow.position.y = height * 0.55;
-  glow.scale.set(width * 1.55, height * 1.3, 1);
-  glow.renderOrder = 2;
-  glow.frustumCulled = false;
-  group.add(glow);
-
-  // Main zombie sprite.
+  // Main zombie sprite (always faces the camera — Sprites are billboards).
   const spriteMat = new THREE.SpriteMaterial({
     map: skin ? skin.texture : null,
     transparent: true,
@@ -969,12 +960,7 @@ function buildZombieSpriteModel(skin, height) {
   sprite.renderOrder = 3;
   group.add(sprite);
 
-  // Bright white locator light — lights nearby ground/props to flag position.
-  const light = new THREE.PointLight(0xffffff, 2, 10, 2);
-  light.position.set(0, height * 0.6, 0);
-  group.add(light);
-
-  return { group, spriteMat, markerMat, glowMat, marker, glow, light, width };
+  return { group, spriteMat, markerMat, marker, width };
 }
 
 // Shared soft round shadow for zombies.
@@ -991,21 +977,22 @@ function makeShadowTexture() {
 }
 const shadowTexture = makeShadowTexture();
 
-// Soft radial sprite texture (for zombie glow halos + locator markers).
-function makeRadialTexture(r, g, b) {
+// Solid filled circle with a soft rim — the always-visible red backing disc.
+function makeDiscTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const ctx = c.getContext('2d');
   const grad = ctx.createRadialGradient(64, 64, 2, 64, 64, 64);
-  grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
-  grad.addColorStop(0.5, `rgba(${r},${g},${b},0.55)`);
-  grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.7, 'rgba(255,255,255,1)'); // solid core
+  grad.addColorStop(1, 'rgba(255,255,255,0)'); // soft edge
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 128, 128);
+  ctx.beginPath();
+  ctx.arc(64, 64, 64, 0, Math.PI * 2);
+  ctx.fill();
   return new THREE.CanvasTexture(c);
 }
-const glowTexture = makeRadialTexture(170, 255, 170); // green-white halo
-const markerTexture = makeRadialTexture(255, 40, 40); // red locator marker
+const discTexture = makeDiscTexture();
 
 // A flat, camera-facing bar sprite (used for zombie health bars).
 function makeBarSprite(color, opacity) {
@@ -1047,10 +1034,7 @@ class Zombie {
     this.group = model.group;
     this.spriteMat = model.spriteMat;
     this.markerMat = model.markerMat;
-    this.glowMat = model.glowMat;
     this.marker = model.marker;
-    this.glow = model.glow;
-    this.zLight = model.light;
     this.group.frustumCulled = false;
     this.group.userData.zombie = this;
 
@@ -1231,12 +1215,9 @@ class Zombie {
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
 
-    // Kill the locator visuals — a corpse shouldn't glow or be flagged.
-    this.zLight.intensity = 0;
+    // Remove the red locator circle — a corpse shouldn't be flagged.
     this.group.remove(this.marker);
-    this.group.remove(this.glow);
     this.markerMat.dispose();
-    this.glowMat.dispose();
 
     // Hand the sprite to the corpse system to tip over and fade out.
     this.spriteMat.color.setRGB(1, 1, 1);
@@ -1257,7 +1238,6 @@ class Zombie {
     scene.remove(this.healthBarFill);
     this.spriteMat.dispose();
     this.markerMat.dispose();
-    this.glowMat.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
     this.healthBarBg.material.dispose();
@@ -1286,35 +1266,52 @@ function updateCorpses(delta) {
 // ---------------------------------------------------------------------------
 // Waves
 // ---------------------------------------------------------------------------
+// Never let more than this many zombies be alive at once (performance cap).
+const MAX_ACTIVE_ZOMBIES = 6;
+
 const game = {
   running: false,
   health: PLAYER_MAX_HEALTH,
   kills: 0,
   score: 0,
   wave: 1,
-  waveRemaining: 0,
+  waveRemaining: 0, // zombies left to KILL this wave
+  pending: 0, // zombies left to SPAWN this wave
+  bossPending: false, // a boss is still owed this wave (spawns last)
 };
 
 function startWave(n) {
   game.wave = n;
   const count = 4 + n * 2;
   game.waveRemaining = count;
+  game.pending = count;
+  game.bossPending = n >= 3; // boss caps wave 3+, spawned last
   if (game.running) audio.waveStart(); // dramatic sting for waves mid-game
-  // Runners grow more common as the waves climb; a boss caps wave 3+.
-  const runnerChance = Math.min(0.5, 0.12 + n * 0.06);
-  for (let i = 0; i < count; i++) {
-    let type = 'walker';
-    if (n >= 3 && i === count - 1) type = 'boss';
-    else if (Math.random() < runnerChance) type = 'runner';
-    new Zombie(type);
-  }
+  spawnZombies();
   updateHud();
+}
+
+// Top the active pool up to MAX_ACTIVE_ZOMBIES from this wave's pending count.
+function spawnZombies() {
+  const runnerChance = Math.min(0.5, 0.12 + game.wave * 0.06);
+  while (zombies.length < MAX_ACTIVE_ZOMBIES && game.pending > 0) {
+    let type = 'walker';
+    if (game.bossPending && game.pending === 1) {
+      type = 'boss'; // the very last spawn of the wave
+      game.bossPending = false;
+    } else if (Math.random() < runnerChance) {
+      type = 'runner';
+    }
+    new Zombie(type);
+    game.pending -= 1;
+  }
 }
 
 function onZombieKilled(points = 100) {
   game.kills += 1;
   game.score += points;
   game.waveRemaining -= 1;
+  spawnZombies(); // refill the pool as zombies die
   if (game.waveRemaining <= 0 && zombies.length === 0) {
     startWave(game.wave + 1);
   }
