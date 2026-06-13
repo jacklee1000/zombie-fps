@@ -21,6 +21,34 @@ function find(...keywords) {
   return key ? byName[key] : null;
 }
 
+// Strong first-person hints (avoid bare "view" — the shotgun render is a
+// "side_view" and must not be mistaken for a viewmodel).
+const VIEWMODEL_HINTS = [
+  'viewmodel',
+  'view_model',
+  'view-model',
+  'first_person',
+  'firstperson',
+  'first-person',
+  'fps',
+  'pov',
+  'holding',
+  'hands',
+  'handgun_fp',
+];
+
+// Find a viewmodel image: prefer one whose name matches BOTH a first-person
+// hint and one of the given weapon words; otherwise any first-person image.
+function findViewmodel(...weaponWords) {
+  const names = Object.keys(byName);
+  const isVm = (n) => VIEWMODEL_HINTS.some((h) => n.toLowerCase().includes(h));
+  let key = names.find(
+    (n) => isVm(n) && weaponWords.some((w) => n.toLowerCase().includes(w))
+  );
+  if (!key) key = names.find(isVm);
+  return key ? byName[key] : null;
+}
+
 // Categorised assets used by the game.
 export const images = {
   all: byName,
@@ -51,6 +79,15 @@ export const images = {
   weapons: {
     shotgun: find('shotgun'),
     machinegun: find('11_07_22'), // ChatGPT AR-15 render
+  },
+
+  // First-person viewmodel(s): the held-gun image shown bottom-right, COD-style.
+  // Detected by first-person keywords so a dropped-in file is picked up
+  // automatically. Mapped per weapon when the filename also hints at one.
+  viewmodels: {
+    shotgun: findViewmodel('shotgun', 'pump'),
+    machinegun: findViewmodel('machine', 'rifle', 'smg', 'assault', 'minigun', 'uzi', 'thompson', 'ar15', 'ar-15'),
+    generic: findViewmodel(),
   },
 };
 
