@@ -945,22 +945,28 @@ function buildZombieSpriteModel(skin, height) {
   marker.frustumCulled = false;
   group.add(marker);
 
-  // Main zombie sprite (always faces the camera — Sprites are billboards).
-  const spriteMat = new THREE.SpriteMaterial({
+  // Main zombie billboard: a plane with MeshBasicMaterial so the PNG renders at
+  // its TRUE colours — unlit and unfogged — instead of being darkened/tinted by
+  // the scene's heavy night fog (which made the old fogged sprites look dark and
+  // shadowy). The plane is manually billboarded to face the camera each frame
+  // (see Zombie.update / updateCorpses), matching the old Sprite behaviour.
+  const geo = new THREE.PlaneGeometry(width, height);
+  geo.translate(0, height / 2, 0); // pivot/anchor at the feet → stands on ground
+  const spriteMat = new THREE.MeshBasicMaterial({
     map: skin ? skin.texture : null,
     transparent: true,
     alphaTest: 0.1,
     depthWrite: false,
-    fog: true,
+    fog: false, // no fog tint → colours stay true (not dark/shadowy)
+    toneMapped: false, // render the texture's exact colours
+    side: THREE.DoubleSide,
   });
-  const sprite = new THREE.Sprite(spriteMat);
-  sprite.scale.set(width, height, 1);
-  sprite.center.set(0.5, 0); // anchor at feet → stands on the ground
+  const sprite = new THREE.Mesh(geo, spriteMat);
   sprite.frustumCulled = false;
   sprite.renderOrder = 3;
   group.add(sprite);
 
-  return { group, spriteMat, markerMat, marker, width };
+  return { group, spriteMat, markerMat, marker, sprite, width };
 }
 
 // Shared soft round shadow for zombies.
@@ -1035,6 +1041,7 @@ class Zombie {
     this.spriteMat = model.spriteMat;
     this.markerMat = model.markerMat;
     this.marker = model.marker;
+    this.sprite = model.sprite; // billboarded plane mesh (MeshBasicMaterial)
     this.group.frustumCulled = false;
     this.group.userData.zombie = this;
 
@@ -1156,6 +1163,10 @@ class Zombie {
       this.groanTimer = 4 + Math.random() * 6;
     }
 
+    // Manual billboard: the zombie plane always faces the camera (Sprites did
+    // this automatically; a MeshBasicMaterial plane must be oriented by hand).
+    this.sprite.quaternion.copy(camera.quaternion);
+
     // Shadow + health bar follow the zombie.
     this.shadow.position.x = pos.x;
     this.shadow.position.z = pos.z;
@@ -1223,7 +1234,15 @@ class Zombie {
     this.spriteMat.color.setRGB(1, 1, 1);
     this.spriteMat.alphaTest = 0; // fade smoothly instead of clipping
     this.spriteMat.transparent = true;
-    corpses.push({ group: this.group, spriteMat: this.spriteMat, t: 0, duration: 0.7 });
+    corpses.push({
+      group: this.group,
+      spriteMat: this.spriteMat,
+      sprite: this.sprite,
+      baseQuat: this.sprite.quaternion.clone(), // last camera-facing orientation
+      tipAxis: new THREE.Vector3(1, 0, 0).applyQuaternion(this.sprite.quaternion),
+      t: 0,
+      duration: 0.7,
+    });
 
     const i = zombies.indexOf(this);
     if (i !== -1) zombies.splice(i, 1);
@@ -1237,6 +1256,7 @@ class Zombie {
     scene.remove(this.healthBarBg);
     scene.remove(this.healthBarFill);
     this.spriteMat.dispose();
+    this.sprite.geometry.dispose();
     this.markerMat.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
@@ -1247,17 +1267,22 @@ class Zombie {
   }
 }
 
-// Animate falling corpses (sprite tips over in place + fades), then remove them.
+// Animate falling corpses (the billboard plane tips over onto the ground while
+// fading), then remove them.
+const _corpseQuat = new THREE.Quaternion();
 function updateCorpses(delta) {
   for (let i = corpses.length - 1; i >= 0; i--) {
     const c = corpses[i];
     c.t += delta;
     const k = Math.min(1, c.t / c.duration);
-    c.spriteMat.rotation = -k * (Math.PI / 2); // billboard tips over in place
+    // Tip the plane over about its feet (pivot) and fade out.
+    _corpseQuat.setFromAxisAngle(c.tipAxis, -k * (Math.PI / 2));
+    c.sprite.quaternion.copy(_corpseQuat.multiply(c.baseQuat));
     c.spriteMat.opacity = 1 - k;
     if (k >= 1) {
       scene.remove(c.group);
       c.spriteMat.dispose();
+      c.sprite.geometry.dispose();
       corpses.splice(i, 1);
     }
   }
@@ -1787,6 +1812,7 @@ function resetGame() {
   for (const c of corpses) {
     scene.remove(c.group);
     c.spriteMat.dispose();
+    c.sprite.geometry.dispose();
   }
   corpses.length = 0;
   game.running = false;
