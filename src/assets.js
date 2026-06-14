@@ -80,17 +80,17 @@ export const images = {
   },
 
   // Walking-enemy sprites (full-body zombies).
-  // NOTE: the soldier (front + riot-shield) and police/cop sprites are
-  // intentionally excluded — they were blocking the player's view.
+  // ONLY the 4 new black-background renders are used now. We reference them by
+  // EXACT filename so none of the older zombie images in the project root are
+  // ever loaded as enemies.
   zombies: [
-    find('nurse'),
-    find('scientist'),
-    find('biker'),
-    find('running'),
+    byName['nurse-zombie.png'],
+    byName['scientist-zombie.png'],
+    byName['biker-zombie.png'],
   ].filter(Boolean),
 
-  // Tougher, larger enemies.
-  bosses: [find('enormous', 'mutant'), find('giant', 'mutant', 'boss')].filter(Boolean),
+  // Tougher, larger enemy — the giant mutant boss (same 4-image set).
+  bosses: [byName['enormous-giant-mutant-boss.png']].filter(Boolean),
 
   // Backdrop scenery for the street.
   environments: {
