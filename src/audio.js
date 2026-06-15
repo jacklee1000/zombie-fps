@@ -227,16 +227,44 @@ const synthGameOver = () => render(2.3, (ctx) => {
   o.connect(g).connect(ctx.destination); o.start(0); o.stop(2.1);
 });
 
+// 12. PICKUP — bright two-note "blip-bloop" power-up chime.
+const synthPickup = () => render(0.32, (ctx) => {
+  const note = (t, freq) => {
+    const o = ctx.createOscillator(); o.type = 'triangle';
+    o.frequency.setValueAtTime(freq, t);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.18);
+  };
+  note(0, 660);    // E5
+  note(0.09, 988); // B5
+});
+
+// 13. HITMARKER — tiny crisp tick confirming a shot connected.
+const synthHitmarker = () => render(0.06, (ctx) => {
+  const n = ctx.createBufferSource(); n.buffer = noiseBuffer(ctx, 0.06);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 4200; bp.Q.value = 2;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.5, 0); g.gain.exponentialRampToValueAtTime(0.001, 0.04);
+  n.connect(bp).connect(g).connect(ctx.destination); n.start(0);
+  const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 1400;
+  const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.25, 0); g2.gain.exponentialRampToValueAtTime(0.001, 0.03);
+  o.connect(g2).connect(ctx.destination); o.start(0); o.stop(0.04);
+});
+
 // Per-sound base volumes — tuned so nothing is harsh.
 const VOL = {
   shotgun: 0.45, machinegun: 0.26, reload: 0.5, groan: 0.5, death: 0.5,
   hit: 0.55, empty: 0.4, footstep: 0.22, music: 0.32, wave: 0.5, gameover: 0.65,
+  pickup: 0.5, hitmarker: 0.3,
 };
 
 const SYNTHS = {
   shotgun: synthShotgun, machinegun: synthMachineGun, reload: synthReload,
   groan: synthGroan, death: synthDeath, hit: synthPlayerHit, empty: synthEmpty,
   footstep: synthFootstep, music: synthMusic, wave: synthWaveStart, gameover: synthGameOver,
+  pickup: synthPickup, hitmarker: synthHitmarker,
 };
 
 class AudioEngine {
@@ -285,6 +313,8 @@ class AudioEngine {
   footstep() { this._play('footstep'); }
   waveStart() { this._play('wave'); }
   gameOver() { this._play('gameover'); }
+  pickup() { this._play('pickup'); }
+  hitmarker() { this._play('hitmarker'); }
 
   // Distance-attenuated groan (0..1 closeness scales the volume).
   groan(closeness = 1) {

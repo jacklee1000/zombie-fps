@@ -29,12 +29,41 @@ canvas {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #7fff7f;
-  font-size: 26px;
-  font-weight: bold;
-  text-shadow: 0 0 4px #000;
   pointer-events: none;
   z-index: 20;
+  width: 16px;
+  height: 16px;
+}
+
+#crosshair::before,
+#crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.85);
+  transition: background 0.05s linear, box-shadow 0.05s linear;
+}
+
+#crosshair::before {
+  width: 2px;
+  height: 16px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+#crosshair::after {
+  width: 16px;
+  height: 2px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Hitmarker: crosshair flashes red when a shot connects. */
+#crosshair.hit::before,
+#crosshair.hit::after {
+  background: #ff4444;
+  box-shadow: 0 0 6px #ff0000;
 }
 
 /* ---------- First-person viewmodel ---------- */
@@ -101,6 +130,84 @@ canvas {
   background: linear-gradient(90deg, #7a1010, #ff2a2a);
   transition: width 0.15s linear, background 0.2s linear;
   box-shadow: inset 0 0 8px rgba(255, 90, 90, 0.4);
+}
+
+/* ---------- Sprint stamina bar ---------- */
+#stamina-wrap {
+  position: absolute;
+  left: 20px;
+  bottom: 64px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+#stamina-icon {
+  color: #ffd24a;
+  font-size: 16px;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(255, 210, 74, 0.8);
+}
+
+#stamina-bar-bg {
+  width: 150px;
+  height: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid #5a5020;
+  border-radius: 5px;
+  overflow: hidden;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.6), inset 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+#stamina-bar {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #b8860b, #ffd24a);
+  transition: width 0.1s linear, opacity 0.2s linear;
+  box-shadow: inset 0 0 6px rgba(255, 220, 120, 0.4);
+}
+
+#stamina-bar.depleted {
+  background: linear-gradient(90deg, #5a3a10, #8a6a20);
+  opacity: 0.7;
+}
+
+/* ---------- Kill-combo callout ---------- */
+#combo {
+  position: absolute;
+  top: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 26px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  color: #ffce3b;
+  text-shadow: 0 0 12px rgba(255, 140, 0, 0.7), 0 0 4px #000;
+  animation: comboPulse 0.35s ease-out;
+}
+
+@keyframes comboPulse {
+  0% {
+    transform: translateX(-50%) scale(1.5);
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+  }
+}
+
+/* ---------- Threat radar ---------- */
+#radar {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 200, 220, 0.35);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.6);
+  opacity: 0.85;
 }
 
 #ammo-wrap {
@@ -531,5 +638,21 @@ button:hover {
   }
   #health-bar-bg {
     width: 130px;
+  }
+  #stamina-bar-bg {
+    width: 110px;
+  }
+  /* Move the radar to the lower-left so it clears the top-right ammo block. */
+  #radar {
+    width: 96px;
+    height: 96px;
+    top: auto;
+    bottom: 96px;
+    right: auto;
+    left: 18px;
+  }
+  #combo {
+    font-size: 20px;
+    top: 70px;
   }
 }

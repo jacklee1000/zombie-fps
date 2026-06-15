@@ -21,6 +21,48 @@ const PLAYER_SPEED = 60;
 const PLAYER_EYE_HEIGHT = 1.8;
 const PLAYER_MAX_HEALTH = 100;
 
+// Sprint: hold Shift to move faster, draining a stamina pool that regenerates.
+const SPRINT_MULTIPLIER = 1.6;
+const SPRINT_MAX = 100;
+const SPRINT_DRAIN = 25; // stamina/sec while sprinting
+const SPRINT_REGEN = 15; // stamina/sec while not sprinting
+
+// Kill-combo: chained kills inside this window raise the score multiplier.
+const COMBO_WINDOW = 2.5; // seconds to keep the combo alive
+
+// Static-obstacle collision boxes (cars, wrecks, trash cans). Populated while
+// building the environment; used for player collision + zombie avoidance.
+const obstacles = []; // THREE.Box3[]
+
+function addObstacle(object3D, shrink = 0.3) {
+  const box = new THREE.Box3().setFromObject(object3D);
+  if (shrink) box.expandByScalar(-shrink); // ease off edges so nothing snags
+  obstacles.push(box);
+}
+
+// Push the player out of any obstacle they've walked into, along the axis of
+// least penetration (so they slide along walls rather than sticking).
+const _playerBox = new THREE.Box3();
+const _pMin = new THREE.Vector3();
+const _pMax = new THREE.Vector3();
+function resolveCollisions(position) {
+  const r = 0.5; // player radius
+  for (const obs of obstacles) {
+    _pMin.set(position.x - r, position.y - 1, position.z - r);
+    _pMax.set(position.x + r, position.y + 1, position.z + r);
+    _playerBox.min.copy(_pMin);
+    _playerBox.max.copy(_pMax);
+    if (!_playerBox.intersectsBox(obs)) continue;
+    const overlapX = Math.min(_pMax.x - obs.min.x, obs.max.x - _pMin.x);
+    const overlapZ = Math.min(_pMax.z - obs.min.z, obs.max.z - _pMin.z);
+    if (overlapX < overlapZ) {
+      position.x += position.x < (obs.min.x + obs.max.x) / 2 ? -overlapX : overlapX;
+    } else {
+      position.z += position.z < (obs.min.z + obs.max.z) / 2 ? -overlapZ : overlapZ;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Weapons
 // ---------------------------------------------------------------------------
@@ -500,6 +542,8 @@ function buildEnvironment() {
       car.position.set(side * (ROAD_HALF_WIDTH - 1.4), 0, z + (Math.random() * 6 - 3));
       car.rotation.y = (Math.random() - 0.5) * 0.15; // slightly askew
       scene.add(car);
+      car.updateMatrixWorld(true);
+      addObstacle(car);
     }
   }
   // a couple of crashed, burning wrecks in the road
@@ -510,6 +554,8 @@ function buildEnvironment() {
     car.position.set(cx, 0, cz);
     car.rotation.y = Math.random() * Math.PI;
     scene.add(car);
+    car.updateMatrixWorld(true);
+    addObstacle(car);
     spawnFire(new THREE.Vector3(cx, 1.0, cz), 1.15); // engine fire
   }
 
@@ -526,6 +572,8 @@ function buildEnvironment() {
         z + (Math.random() * 6 - 3)
       );
       scene.add(can);
+      can.updateMatrixWorld(true);
+      addObstacle(can, 0.1); // thin cans need less shrink
     }
   }
 
@@ -810,19 +858,21 @@ function buildZombieSpriteModel(skin, height) {
   const width = height * aspect;
   const group = new THREE.Group();
 
-  // Solid red backing circle — guaranteed visibility, no lighting cost.
-  const markerMat = new THREE.SpriteMaterial({
-    map: discTexture,
-    color: 0xff2a2a,
+  // A thin red ring at the feet marks the zombie at eye-catching ground level —
+  // far less jarring than the old full red backing disc (which read as debug
+  // art), while still keeping enemies easy to pick out against the dark street.
+  const ringR = Math.max(0.45, width * 0.55);
+  const markerMat = new THREE.MeshBasicMaterial({
+    color: 0xff2222,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
     depthWrite: false,
     fog: false,
   });
-  const marker = new THREE.Sprite(markerMat);
-  marker.center.set(0.5, 0.5);
-  marker.position.y = height * 0.5;
-  marker.scale.set(width * 1.7, height * 1.05, 1);
+  const marker = new THREE.Mesh(new THREE.RingGeometry(ringR * 0.62, ringR, 24), markerMat);
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = 0.05;
   marker.renderOrder = 1;
   marker.frustumCulled = false;
   group.add(marker);
@@ -1024,8 +1074,27 @@ class Zombie {
 
     const attackRange = this.isBoss ? 3.2 : 1.9;
     if (dist > attackRange) {
-      pos.x += (dx / dist) * this.speed * delta;
-      pos.z += (dz / dist) * this.speed * delta;
+      // Desired direction toward the player...
+      let moveX = dx / dist;
+      let moveZ = dz / dist;
+      // ...plus a cheap repulsion from nearby obstacles so zombies steer around
+      // cars/wrecks instead of walking straight through them.
+      const avoidRadius = 4;
+      for (const obs of obstacles) {
+        const cx = (obs.min.x + obs.max.x) / 2;
+        const cz = (obs.min.z + obs.max.z) / 2;
+        const odx = pos.x - cx;
+        const odz = pos.z - cz;
+        const odist = Math.sqrt(odx * odx + odz * odz);
+        if (odist < avoidRadius && odist > 0.1) {
+          const strength = (1 - odist / avoidRadius) * 2;
+          moveX += (odx / odist) * strength;
+          moveZ += (odz / odist) * strength;
+        }
+      }
+      const len = Math.sqrt(moveX * moveX + moveZ * moveZ) || 1;
+      pos.x += (moveX / len) * this.speed * delta;
+      pos.z += (moveZ / len) * this.speed * delta;
       // Subtle shamble bob while moving (sprites always face the camera).
       this.walkPhase += delta * this.speed * 2.4;
       pos.y = Math.abs(Math.sin(this.walkPhase)) * 0.05;
@@ -1108,8 +1177,9 @@ class Zombie {
     this.healthBarBg.material.dispose();
     this.healthBarFill.material.dispose();
 
-    // Remove the red locator circle — a corpse shouldn't be flagged.
+    // Remove the red locator ring — a corpse shouldn't be flagged.
     this.group.remove(this.marker);
+    this.marker.geometry.dispose();
     this.markerMat.dispose();
 
     // Hand the sprite to the corpse system to tip over and fade out.
@@ -1128,6 +1198,12 @@ class Zombie {
 
     const i = zombies.indexOf(this);
     if (i !== -1) zombies.splice(i, 1);
+
+    // Chance to drop a health/ammo pickup where the zombie fell.
+    if (Math.random() < 0.25) {
+      const types = ['health', 'shotgun_ammo', 'machinegun_ammo'];
+      spawnPickup(types[Math.floor(Math.random() * types.length)], new THREE.Vector3(pos.x, 0, pos.z));
+    }
   }
 
   // Immediate, full removal with no animation (used when resetting).
@@ -1139,6 +1215,7 @@ class Zombie {
     scene.remove(this.healthBarFill);
     this.spriteMat.dispose();
     this.sprite.geometry.dispose();
+    this.marker.geometry.dispose();
     this.markerMat.dispose();
     this.shadow.material.dispose();
     this.shadow.geometry.dispose();
@@ -1173,8 +1250,20 @@ function updateCorpses(delta) {
 // ---------------------------------------------------------------------------
 // Waves
 // ---------------------------------------------------------------------------
-// Never let more than this many zombies be alive at once (performance cap).
-const MAX_ACTIVE_ZOMBIES = 6;
+// Max simultaneously-alive zombies, scaling with the wave. The cap of 20 keeps
+// weak devices alive while still feeling like a horde (was a flat 6).
+function getMaxZombies() {
+  return Math.min(20, 6 + Math.floor(game.wave * 1.5));
+}
+
+// Per-wave enemy mix: mostly walkers early, runners ramping in, periodic bosses.
+function getWaveComposition(n) {
+  return {
+    walkers: Math.floor(3 + n * 1.5),
+    runners: Math.max(0, Math.floor((n - 2) * 1.2)),
+    bosses: n >= 3 ? Math.floor((n - 2) / 3) : 0,
+  };
+}
 
 const game = {
   running: false,
@@ -1183,46 +1272,149 @@ const game = {
   score: 0,
   wave: 1,
   waveRemaining: 0, // zombies left to KILL this wave
-  pending: 0, // zombies left to SPAWN this wave
-  bossPending: false, // a boss is still owed this wave (spawns last)
+  pending: 0, // zombies left to SPAWN this wave (sum of the pools below)
+  pendingWalkers: 0,
+  pendingRunners: 0,
+  pendingBosses: 0,
 };
 
 function startWave(n) {
   game.wave = n;
-  const count = 4 + n * 2;
-  game.waveRemaining = count;
-  game.pending = count;
-  game.bossPending = n >= 3; // boss caps wave 3+, spawned last
+  const comp = getWaveComposition(n);
+  const total = comp.walkers + comp.runners + comp.bosses;
+  game.waveRemaining = total;
+  game.pending = total;
+  game.pendingWalkers = comp.walkers;
+  game.pendingRunners = comp.runners;
+  game.pendingBosses = comp.bosses;
   if (game.running) audio.waveStart(); // dramatic sting for waves mid-game
   spawnZombies();
   updateHud();
 }
 
-// Top the active pool up to MAX_ACTIVE_ZOMBIES from this wave's pending count.
+// Top the active pool up to getMaxZombies() by drawing from the wave's pools.
+// Bosses are held back until walkers + runners are exhausted (they spawn last).
 function spawnZombies() {
-  const runnerChance = Math.min(0.5, 0.12 + game.wave * 0.06);
-  while (zombies.length < MAX_ACTIVE_ZOMBIES && game.pending > 0) {
-    let type = 'walker';
-    if (game.bossPending && game.pending === 1) {
-      type = 'boss'; // the very last spawn of the wave
-      game.bossPending = false;
-    } else if (Math.random() < runnerChance) {
+  while (
+    zombies.length < getMaxZombies() &&
+    game.pendingWalkers + game.pendingRunners + game.pendingBosses > 0
+  ) {
+    let type;
+    if (game.pendingBosses > 0 && game.pendingWalkers + game.pendingRunners === 0) {
+      type = 'boss';
+      game.pendingBosses -= 1;
+    } else if (game.pendingRunners > 0 && Math.random() < 0.4) {
       type = 'runner';
+      game.pendingRunners -= 1;
+    } else if (game.pendingWalkers > 0) {
+      type = 'walker';
+      game.pendingWalkers -= 1;
+    } else if (game.pendingRunners > 0) {
+      type = 'runner';
+      game.pendingRunners -= 1;
+    } else {
+      type = 'boss';
+      game.pendingBosses -= 1;
     }
     new Zombie(type);
     game.pending -= 1;
   }
 }
 
+// Kill-combo state: chained kills within COMBO_WINDOW raise a score multiplier.
+let comboCount = 0;
+let comboTimer = 0;
+
 function onZombieKilled(points = 100) {
+  comboCount += 1;
+  comboTimer = COMBO_WINDOW;
+  const multiplier = Math.min(5, 1 + Math.floor(comboCount / 3));
+
   game.kills += 1;
-  game.score += points;
+  game.score += points * multiplier;
   game.waveRemaining -= 1;
+
+  if (el.combo) {
+    if (multiplier > 1) {
+      el.combo.textContent = `x${multiplier} COMBO`;
+      el.combo.classList.remove('hidden');
+      // restart the pop animation on each qualifying kill
+      el.combo.style.animation = 'none';
+      void el.combo.offsetWidth;
+      el.combo.style.animation = '';
+    } else {
+      el.combo.classList.add('hidden');
+    }
+  }
+
   spawnZombies(); // refill the pool as zombies die
   if (game.waveRemaining <= 0 && zombies.length === 0) {
     startWave(game.wave + 1);
   }
   updateHud();
+}
+
+// ---------------------------------------------------------------------------
+// Pickups — health / ammo drops that zombies leave behind, so the player can
+// recover and the game can't reach an unwinnable out-of-ammo state.
+// ---------------------------------------------------------------------------
+const pickups = [];
+
+function spawnPickup(type, position) {
+  // type: 'health' | 'shotgun_ammo' | 'machinegun_ammo'
+  const color = type === 'health' ? 0x33ff33 : 0xffcc00;
+  const geo = new THREE.OctahedronGeometry(0.35);
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    emissive: color,
+    emissiveIntensity: 0.8,
+    roughness: 0.3,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(position);
+  mesh.position.y = 0.7;
+  scene.add(mesh);
+  pickups.push({ mesh, mat, type, time: 0 });
+}
+
+function updatePickups(delta, playerPos) {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const pk = pickups[i];
+    pk.time += delta;
+    pk.mesh.rotation.y += delta * 2;
+    pk.mesh.position.y = 0.7 + Math.sin(pk.time * 3) * 0.15;
+
+    const dx = playerPos.x - pk.mesh.position.x;
+    const dz = playerPos.z - pk.mesh.position.z;
+    if (dx * dx + dz * dz < 2.5) {
+      applyPickup(pk.type);
+      scene.remove(pk.mesh);
+      pk.mat.dispose();
+      pk.mesh.geometry.dispose();
+      pickups.splice(i, 1);
+    }
+  }
+}
+
+function applyPickup(type) {
+  if (type === 'health') {
+    game.health = Math.min(PLAYER_MAX_HEALTH, game.health + 25);
+  } else if (type === 'shotgun_ammo') {
+    loadout.shotgun.reserve = Math.min(WEAPONS.shotgun.reserveMax, loadout.shotgun.reserve + 12);
+  } else if (type === 'machinegun_ammo') {
+    loadout.machinegun.reserve = Math.min(WEAPONS.machinegun.reserveMax, loadout.machinegun.reserve + 60);
+  }
+  audio.pickup();
+  updateHud();
+}
+
+function clearPickups() {
+  for (const pk of pickups) {
+    scene.remove(pk.mesh);
+    pk.mat.dispose();
+    pk.mesh.geometry.dispose();
+  }
+  pickups.length = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,32 +1427,52 @@ const loadout = {
 let currentWeaponKey = 'shotgun';
 let fireTimer = 0;
 let reloading = false;
+let reloadTimer = 0; // counts down in the game loop (delta-based)
+let reloadWeaponKey = null; // weapon the in-progress reload belongs to
 let firing = false; // true while SPACE is held
+let hitmarkerTimer = 0; // >0 shows the red crosshair hit flash
 
 const currentWeapon = () => WEAPONS[currentWeaponKey];
 
 function switchWeapon(key) {
   if (!WEAPONS[key] || key === currentWeaponKey) return;
   currentWeaponKey = key;
-  reloading = false;
+  reloading = false; // cancel any in-progress reload on the old weapon
+  reloadTimer = 0;
+  reloadWeaponKey = null;
   fireTimer = 0;
   updateHud();
 }
 
+// Begin a reload. Completion is handled in the game loop (updateReload) using a
+// delta-based timer, so backgrounding the tab can't fast-forward it and a weapon
+// switch cancels it cleanly (unlike the old setTimeout).
 function reload() {
   const w = currentWeapon();
   const ammo = loadout[currentWeaponKey];
   if (reloading || ammo.mag >= w.magSize || ammo.reserve <= 0) return;
   reloading = true;
+  reloadTimer = w.reloadTime;
+  reloadWeaponKey = currentWeaponKey;
   audio.reload();
   updateHud();
-  setTimeout(() => {
-    const take = Math.min(w.magSize - ammo.mag, ammo.reserve);
-    ammo.mag += take;
-    ammo.reserve -= take;
+}
+
+function updateReload(delta) {
+  if (!reloading) return;
+  reloadTimer -= delta;
+  if (reloadTimer <= 0 || currentWeaponKey !== reloadWeaponKey) {
+    if (currentWeaponKey === reloadWeaponKey) {
+      const ammo = loadout[currentWeaponKey];
+      const take = Math.min(WEAPONS[currentWeaponKey].magSize - ammo.mag, ammo.reserve);
+      ammo.mag += take;
+      ammo.reserve -= take;
+    }
     reloading = false;
+    reloadTimer = 0;
+    reloadWeaponKey = null;
     updateHud();
-  }, w.reloadTime * 1000);
+  }
 }
 
 // Manual ray-vs-body hit test (reliable, unlike Sprite.raycast). Models each
@@ -1306,6 +1518,9 @@ function nearestZombieHit(origin, dir, range) {
 
 function tryFire() {
   if (!game.running || reloading || fireTimer > 0) return;
+  // No shooting while actively sprinting — sprint to reposition, stop to fight.
+  if (sprinting && sprintStamina > 0 &&
+      (moveState.forward || moveState.back || moveState.left || moveState.right)) return;
   const w = currentWeapon();
   const ammo = loadout[currentWeaponKey];
   if (ammo.mag <= 0) {
@@ -1351,6 +1566,11 @@ function tryFire() {
     spawnBlood(rec.point);
     spawnDamageNumber(rec.point, rec.dmg, rec.killed);
   }
+  // One hitmarker per shot that connected (not per pellet).
+  if (dealt.size > 0) {
+    hitmarkerTimer = 0.15;
+    audio.hitmarker();
+  }
   updateHud();
 }
 
@@ -1359,6 +1579,7 @@ function tryFire() {
 // ---------------------------------------------------------------------------
 const damageFlash = document.getElementById('damage-flash');
 let flashTimer = 0;
+let shakeIntensity = 0; // camera-shake amount, decays each frame
 
 function damagePlayer(amount) {
   if (!game.running) return;
@@ -1366,6 +1587,7 @@ function damagePlayer(amount) {
   audio.playerHit();
   damageFlash.classList.add('show');
   flashTimer = 0.15;
+  shakeIntensity = 0.15; // jolt the camera on hit
   updateHud();
   if (game.health <= 0) endGame();
 }
@@ -1386,6 +1608,10 @@ const el = {
   wave: document.getElementById('wave'),
   score: document.getElementById('score'),
   muteState: document.getElementById('mute-state'),
+  crosshair: document.getElementById('crosshair'),
+  combo: document.getElementById('combo'),
+  staminaBar: document.getElementById('stamina-bar'),
+  radar: document.getElementById('radar'),
 };
 
 // First-person viewmodel state (only active once a viewmodel image exists).
@@ -1437,6 +1663,8 @@ function updateHud() {
 const moveState = { forward: false, back: false, left: false, right: false };
 const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
+let sprinting = false; // true while a Shift key is held
+let sprintStamina = SPRINT_MAX;
 
 function onKeyDown(e) {
   switch (e.code) {
@@ -1446,6 +1674,7 @@ function onKeyDown(e) {
     case 'KeyD': case 'ArrowRight': moveState.right = true; break;
     case 'Digit1': switchWeapon('shotgun'); break;
     case 'Digit2': switchWeapon('machinegun'); break;
+    case 'ShiftLeft': case 'ShiftRight': sprinting = true; break;
     case 'KeyR': reload(); break;
     case 'KeyM': {
       const muted = audio.toggleMusicMute();
@@ -1466,6 +1695,7 @@ function onKeyUp(e) {
     case 'KeyS': case 'ArrowDown': moveState.back = false; break;
     case 'KeyA': case 'ArrowLeft': moveState.left = false; break;
     case 'KeyD': case 'ArrowRight': moveState.right = false; break;
+    case 'ShiftLeft': case 'ShiftRight': sprinting = false; break;
     case 'Space': firing = false; break;
   }
 }
@@ -1671,6 +1901,7 @@ function beginPlay() {
   overlay.classList.add('hidden');
   gameover.classList.add('hidden');
   el.hud.classList.remove('hidden');
+  if (el.crosshair) el.crosshair.classList.remove('hidden');
   game.running = true;
   audio.startMusic(); // resumes the Web Audio context on this user gesture
   if (!sessionStarted) {
@@ -1683,6 +1914,7 @@ function beginPlay() {
 controls.addEventListener('lock', beginPlay);
 controls.addEventListener('unlock', () => {
   el.viewmodel.classList.add('hidden');
+  if (el.crosshair) el.crosshair.classList.add('hidden');
   if (game.running && game.health > 0) overlay.classList.remove('hidden');
 });
 
@@ -1697,6 +1929,7 @@ function resetGame() {
     c.sprite.geometry.dispose();
   }
   corpses.length = 0;
+  clearPickups();
   game.running = false;
   game.health = PLAYER_MAX_HEALTH;
   game.kills = 0;
@@ -1705,6 +1938,19 @@ function resetGame() {
   loadout.shotgun = { mag: WEAPONS.shotgun.magSize, reserve: WEAPONS.shotgun.reserveMax };
   loadout.machinegun = { mag: WEAPONS.machinegun.magSize, reserve: WEAPONS.machinegun.reserveMax };
   currentWeaponKey = 'shotgun';
+  // Reset transient combat/movement state.
+  reloading = false;
+  reloadTimer = 0;
+  reloadWeaponKey = null;
+  fireTimer = 0;
+  firing = false;
+  hitmarkerTimer = 0;
+  shakeIntensity = 0;
+  sprinting = false;
+  sprintStamina = SPRINT_MAX;
+  comboCount = 0;
+  comboTimer = 0;
+  if (el.combo) el.combo.classList.add('hidden');
   controls.object.position.set(0, PLAYER_EYE_HEIGHT, STREET_LENGTH / 2 - 18);
   startWave(1);
   game.running = true;
@@ -1720,6 +1966,10 @@ function endGame() {
   controls.unlock();
   el.hud.classList.add('hidden');
   el.viewmodel.classList.add('hidden');
+  if (el.crosshair) {
+    el.crosshair.classList.add('hidden');
+    el.crosshair.classList.remove('hit');
+  }
   document.getElementById('final-stats').textContent =
     `Kills: ${game.kills}   ·   Reached Wave ${game.wave}`;
   gameover.classList.remove('hidden');
@@ -1750,11 +2000,15 @@ function makeBloodTexture() {
   return new THREE.CanvasTexture(c);
 }
 const bloodTexture = makeBloodTexture();
-const bloodParticles = [];
 
-function spawnBlood(point, count = 12) {
-  if (!point) return;
-  for (let i = 0; i < count; i++) {
+// Pre-allocated blood-particle pool. Sprites/materials are created ONCE and
+// reused (toggled visible/active) instead of being allocated + disposed per
+// splatter — that churn was driving GC stutter / frame hitches.
+const BLOOD_POOL_SIZE = 80;
+const bloodPool = [];
+
+function initBloodPool() {
+  for (let i = 0; i < BLOOD_POOL_SIZE; i++) {
     const mat = new THREE.SpriteMaterial({
       map: bloodTexture,
       color: 0xaa0000,
@@ -1763,56 +2017,96 @@ function spawnBlood(point, count = 12) {
       fog: true,
     });
     const s = new THREE.Sprite(mat);
-    const sz = 0.12 + Math.random() * 0.2;
-    s.scale.set(sz, sz, 1);
-    s.position.copy(point);
+    s.visible = false;
     scene.add(s);
-    bloodParticles.push({
-      sprite: s,
-      vel: new THREE.Vector3(
-        (Math.random() - 0.5) * 4,
-        Math.random() * 3 + 1,
-        (Math.random() - 0.5) * 4
-      ),
-      life: 0.5,
-      maxLife: 0.5,
-    });
+    bloodPool.push({ sprite: s, mat, vel: new THREE.Vector3(), life: 0, maxLife: 0.5, active: false });
+  }
+}
+
+function spawnBlood(point, count = 12) {
+  if (!point) return;
+  for (let i = 0; i < count; i++) {
+    const b = bloodPool.find((p) => !p.active);
+    if (!b) return; // pool exhausted — skip rather than allocate
+    b.active = true;
+    b.sprite.visible = true;
+    const sz = 0.12 + Math.random() * 0.2;
+    b.sprite.scale.set(sz, sz, 1);
+    b.sprite.position.copy(point);
+    b.vel.set((Math.random() - 0.5) * 4, Math.random() * 3 + 1, (Math.random() - 0.5) * 4);
+    b.life = b.maxLife;
+    b.mat.opacity = 1;
   }
 }
 
 function updateBlood(delta) {
-  for (let i = bloodParticles.length - 1; i >= 0; i--) {
-    const b = bloodParticles[i];
+  for (const b of bloodPool) {
+    if (!b.active) continue;
     b.life -= delta;
     if (b.life <= 0) {
-      scene.remove(b.sprite);
-      b.sprite.material.dispose();
-      bloodParticles.splice(i, 1);
+      b.active = false;
+      b.sprite.visible = false;
       continue;
     }
     b.vel.y -= 9.8 * delta; // gravity
     b.sprite.position.addScaledVector(b.vel, delta);
-    b.sprite.material.opacity = b.life / b.maxLife;
+    b.mat.opacity = b.life / b.maxLife;
   }
 }
+initBloodPool();
 
 const fxLayer = document.getElementById('fx-layer');
 const _proj = new THREE.Vector3();
 
+// Pre-allocated pool of damage-number DOM nodes. Reused instead of
+// createElement + remove per hit, which under rapid machine-gun fire spawned
+// (and GC'd) hundreds of nodes. Lifetimes are tracked in the game loop.
+const DMG_POOL_SIZE = 30;
+const dmgPool = [];
+
+function initDmgPool() {
+  if (!fxLayer) return;
+  for (let i = 0; i < DMG_POOL_SIZE; i++) {
+    const div = document.createElement('div');
+    div.className = 'dmg-number';
+    div.style.display = 'none';
+    fxLayer.appendChild(div);
+    dmgPool.push({ div, timer: 0, active: false });
+  }
+}
+
 function spawnDamageNumber(point, amount, killed) {
   if (!point || !fxLayer) return;
+  const entry = dmgPool.find((d) => !d.active);
+  if (!entry) return; // all visible — skip rather than flood the DOM
   _proj.copy(point).project(camera);
   if (_proj.z > 1) return; // behind the camera
   const x = (_proj.x * 0.5 + 0.5) * window.innerWidth;
   const y = (-_proj.y * 0.5 + 0.5) * window.innerHeight;
-  const div = document.createElement('div');
-  div.className = 'dmg-number' + (killed ? ' kill' : '');
-  div.textContent = killed ? 'KILL +' + Math.round(amount) : String(Math.round(amount));
-  div.style.left = x + 'px';
-  div.style.top = y + 'px';
-  fxLayer.appendChild(div);
-  setTimeout(() => div.remove(), 800);
+  entry.div.className = 'dmg-number' + (killed ? ' kill' : '');
+  entry.div.textContent = killed ? 'KILL +' + Math.round(amount) : String(Math.round(amount));
+  entry.div.style.left = x + 'px';
+  entry.div.style.top = y + 'px';
+  entry.div.style.display = '';
+  // restart the float-up CSS animation on this reused node
+  entry.div.style.animation = 'none';
+  void entry.div.offsetWidth;
+  entry.div.style.animation = '';
+  entry.active = true;
+  entry.timer = 0.8;
 }
+
+function updateDamageNumbers(delta) {
+  for (const d of dmgPool) {
+    if (!d.active) continue;
+    d.timer -= delta;
+    if (d.timer <= 0) {
+      d.active = false;
+      d.div.style.display = 'none';
+    }
+  }
+}
+initDmgPool();
 
 // ---------------------------------------------------------------------------
 // Resize
@@ -1822,6 +2116,68 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// ---------------------------------------------------------------------------
+// Radar — top-down threat blips, rotated so "up" is always where you're facing.
+// ---------------------------------------------------------------------------
+const radarCtx = el.radar ? el.radar.getContext('2d') : null;
+const _radarDir = new THREE.Vector3();
+
+function updateRadar() {
+  if (!radarCtx) return;
+  const ctx = radarCtx;
+  const size = 140;
+  const cx = size / 2;
+  const scale = size / 80; // ~80 world-units across the dish
+  ctx.clearRect(0, 0, size, size);
+
+  // Dish background.
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath();
+  ctx.arc(cx, cx, cx - 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Player at the centre.
+  ctx.fillStyle = '#4af';
+  ctx.beginPath();
+  ctx.arc(cx, cx, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  const pp = controls.object.position;
+  camera.getWorldDirection(_radarDir);
+  const angle = Math.atan2(_radarDir.x, _radarDir.z);
+  const ca = Math.cos(-angle);
+  const sa = Math.sin(-angle);
+
+  // Pickups as small green diamonds.
+  ctx.fillStyle = '#3f9';
+  for (const pk of pickups) {
+    const dx = pk.mesh.position.x - pp.x;
+    const dz = pk.mesh.position.z - pp.z;
+    const rx = dx * ca - dz * sa;
+    const ry = dx * sa + dz * ca;
+    const sx = cx + rx * scale;
+    const sy = cx - ry * scale;
+    if (sx < 4 || sx > size - 4 || sy < 4 || sy > size - 4) continue;
+    ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+  }
+
+  // Zombies (bosses are bigger magenta dots).
+  for (const z of zombies) {
+    if (z.dead) continue;
+    const dx = z.group.position.x - pp.x;
+    const dz = z.group.position.z - pp.z;
+    const rx = dx * ca - dz * sa;
+    const ry = dx * sa + dz * ca;
+    const sx = cx + rx * scale;
+    const sy = cx - ry * scale;
+    if (sx < 4 || sx > size - 4 || sy < 4 || sy > size - 4) continue;
+    ctx.fillStyle = z.isBoss ? '#f0f' : '#f33';
+    ctx.beginPath();
+    ctx.arc(sx, sy, z.isBoss ? 3 : 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Loop
@@ -1834,13 +2190,17 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
 
   if (game.running && playActive()) {
+    const moving = moveState.forward || moveState.back || moveState.left || moveState.right;
+    const canSprint = sprinting && sprintStamina > 0 && moving;
+    const speedMul = canSprint ? SPRINT_MULTIPLIER : 1;
+
     velocity.x -= velocity.x * 10 * delta;
     velocity.z -= velocity.z * 10 * delta;
     direction.z = Number(moveState.forward) - Number(moveState.back);
     direction.x = Number(moveState.right) - Number(moveState.left);
     direction.normalize();
-    if (moveState.forward || moveState.back) velocity.z -= direction.z * PLAYER_SPEED * delta;
-    if (moveState.left || moveState.right) velocity.x -= direction.x * PLAYER_SPEED * delta;
+    if (moveState.forward || moveState.back) velocity.z -= direction.z * PLAYER_SPEED * speedMul * delta;
+    if (moveState.left || moveState.right) velocity.x -= direction.x * PLAYER_SPEED * speedMul * delta;
     controls.moveRight(-velocity.x * delta);
     controls.moveForward(-velocity.z * delta);
 
@@ -1848,7 +2208,20 @@ function animate() {
     p.x = THREE.MathUtils.clamp(p.x, -PLAY_HALF_WIDTH + 1, PLAY_HALF_WIDTH - 1);
     p.z = THREE.MathUtils.clamp(p.z, -STREET_LENGTH / 2 + 4, STREET_LENGTH / 2 - 4);
     p.y = PLAYER_EYE_HEIGHT;
+    resolveCollisions(p); // keep the player out of cars/wrecks/cans
 
+    // Sprint stamina: drain while sprinting, regenerate otherwise.
+    if (canSprint) {
+      sprintStamina = Math.max(0, sprintStamina - SPRINT_DRAIN * delta);
+    } else {
+      sprintStamina = Math.min(SPRINT_MAX, sprintStamina + SPRINT_REGEN * delta);
+    }
+    if (el.staminaBar) {
+      el.staminaBar.style.width = sprintStamina + '%';
+      el.staminaBar.classList.toggle('depleted', sprintStamina <= 0);
+    }
+
+    updateReload(delta);
     if (fireTimer > 0) fireTimer -= delta;
     if (firing && currentWeapon().auto) tryFire();
 
@@ -1878,6 +2251,16 @@ function animate() {
     if (vmRecoil > 0) vmRecoil = Math.max(0, vmRecoil - delta * 6);
 
     for (const z of [...zombies]) z.update(delta, p);
+    updatePickups(delta, p);
+
+    // Kill-combo decay: drop the chain once the window lapses.
+    if (comboTimer > 0) {
+      comboTimer -= delta;
+      if (comboTimer <= 0) {
+        comboCount = 0;
+        if (el.combo) el.combo.classList.add('hidden');
+      }
+    }
 
     if (skinsReady && zombies.length === 0 && game.waveRemaining <= 0) {
       startWave(game.wave + 1);
@@ -1888,6 +2271,16 @@ function animate() {
   updateCorpses(delta);
   updateFires(delta);
   updateAtmosphere(delta);
+  updateDamageNumbers(delta);
+  updateRadar();
+
+  // Hitmarker: flash the crosshair red briefly after a connecting shot.
+  if (hitmarkerTimer > 0) {
+    hitmarkerTimer -= delta;
+    if (el.crosshair) el.crosshair.classList.add('hit');
+  } else if (el.crosshair) {
+    el.crosshair.classList.remove('hit');
+  }
 
   if (muzzleLight.intensity > 0) {
     muzzleLight.intensity = Math.max(0, muzzleLight.intensity - delta * 30);
@@ -1897,7 +2290,21 @@ function animate() {
     if (flashTimer <= 0) damageFlash.classList.remove('show');
   }
 
-  renderer.render(scene, camera);
+  // Screen shake on damage: jitter the camera, then restore so the offset
+  // doesn't accumulate into the player's real position next frame.
+  if (shakeIntensity > 0) {
+    const sx = camera.position.x;
+    const sy = camera.position.y;
+    const sz = camera.position.z;
+    camera.position.x += (Math.random() - 0.5) * shakeIntensity;
+    camera.position.y += (Math.random() - 0.5) * shakeIntensity;
+    camera.position.z += (Math.random() - 0.5) * shakeIntensity;
+    shakeIntensity = Math.max(0, shakeIntensity - delta * 1.5);
+    renderer.render(scene, camera);
+    camera.position.set(sx, sy, sz);
+  } else {
+    renderer.render(scene, camera);
+  }
 }
 
 animate();
