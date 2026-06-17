@@ -564,6 +564,18 @@ button:hover {
   box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
 }
 
+/* Melee shove, to the left of the FIRE button. */
+#btn-melee {
+  right: 158px;
+  bottom: 44px;
+  width: 76px;
+  height: 76px;
+  font-size: 32px;
+  background: radial-gradient(circle at 38% 32%, rgba(150, 120, 80, 0.95), rgba(70, 50, 25, 0.95));
+  border: 2px solid rgba(230, 200, 150, 0.7);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
+}
+
 /* Weapon-switch buttons, side by side above the reload button. */
 #btn-weapon1,
 #btn-weapon2 {
@@ -582,6 +594,138 @@ button:hover {
 
 #btn-weapon2 {
   right: 24px;
+}
+
+/* ---------- Between-wave upgrade shop ---------- */
+#shop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, rgba(8, 14, 22, 0.86), rgba(0, 0, 0, 0.96));
+  z-index: 31;
+}
+
+#shop-box {
+  width: min(560px, 92vw);
+  padding: 28px 30px 22px;
+  border: 1px solid #25405a;
+  background: rgba(6, 12, 20, 0.82);
+  border-radius: 10px;
+  text-align: center;
+  box-shadow: 0 0 32px rgba(0, 0, 0, 0.7);
+}
+
+#shop-box h2 {
+  font-size: 26px;
+  letter-spacing: 4px;
+  color: #7fdcff;
+  text-shadow: 0 0 14px rgba(60, 180, 230, 0.5);
+  margin-bottom: 6px;
+}
+
+.shop-score {
+  font-size: 16px;
+  letter-spacing: 3px;
+  color: #cfe2ff;
+  margin-bottom: 18px;
+}
+
+.shop-score span {
+  color: #ffe08a;
+  font-weight: bold;
+  font-size: 20px;
+}
+
+#shop-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  font-family: inherit;
+  text-align: left;
+  color: #eaf6ff;
+  background: linear-gradient(180deg, rgba(20, 38, 55, 0.95), rgba(12, 24, 38, 0.95));
+  border: 1px solid #2c4d6b;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: transform 0.08s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.shop-item:hover {
+  transform: scale(1.015);
+  box-shadow: 0 0 16px rgba(80, 180, 230, 0.35);
+}
+
+.shop-item .num {
+  flex: 0 0 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 4px;
+  background: rgba(120, 200, 230, 0.18);
+  border: 1px solid rgba(140, 210, 235, 0.4);
+  font-weight: bold;
+  color: #aee6ff;
+}
+
+.shop-item .info {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.shop-item .info b {
+  font-size: 15px;
+  color: #fff;
+}
+
+.shop-item .info small {
+  font-size: 11px;
+  color: #8fb4cc;
+  letter-spacing: 0.5px;
+}
+
+.shop-item .lvl {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #9fd0a0;
+}
+
+.shop-item .cost {
+  flex: 0 0 auto;
+  min-width: 56px;
+  text-align: right;
+  font-weight: bold;
+  color: #ffe08a;
+}
+
+.shop-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shop-item.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.shop-item.maxed .cost {
+  color: #7fff9a;
+}
+
+#shop-continue {
+  font-size: 18px;
 }
 
 /* Show touch hint only on touch devices; hide the mouse instructions there. */

@@ -59,7 +59,7 @@
 
       <div id="mute-state">&#9834; MUSIC ON</div>
 
-      <div id="hint">[1] Shotgun &nbsp; [2] Machine Gun &nbsp; [R] Reload &nbsp; [WASD] Move &nbsp; [SHIFT] Sprint &nbsp; [Mouse] Aim &nbsp; [SPACE] Fire &nbsp; [M] Mute Music</div>
+      <div id="hint">[1] Shotgun &nbsp; [2] Machine Gun &nbsp; [R] Reload &nbsp; [V/RMB] Melee &nbsp; [WASD] Move &nbsp; [SHIFT] Sprint &nbsp; [SPACE] Fire &nbsp; [M] Mute</div>
     </div>
 
     <!-- Damage flash overlay -->
@@ -79,9 +79,13 @@
           <li><b>Mouse</b> — Look</li>
           <li><b>SPACE</b> — Fire</li>
           <li><b>SHIFT</b> — Sprint</li>
+          <li><b>V / RMB</b> — Melee shove</li>
           <li><b>1 / 2</b> — Shotgun / Machine Gun</li>
           <li><b>R</b> — Reload</li>
         </ul>
+        <p class="tiny" style="margin-top:0">
+          Shoot the red barrels to blow the horde away · clear a wave to spend score on upgrades.
+        </p>
         <button id="start-btn">CLICK TO PLAY</button>
         <p class="tiny desktop-hint">(Click locks the mouse. Press ESC to release.)</p>
         <p class="tiny touch-hint">
@@ -103,8 +107,20 @@
       <!-- RIGHT: action buttons -->
       <div id="btn-weapon1" class="touch-btn small">1</div>
       <div id="btn-weapon2" class="touch-btn small">2</div>
+      <div id="btn-melee" class="touch-btn medium">&#129354;</div>
       <div id="btn-reload" class="touch-btn medium">R</div>
       <div id="btn-fire" class="touch-btn fire">FIRE</div>
+    </div>
+
+    <!-- Between-wave upgrade shop -->
+    <div id="shop" class="hidden">
+      <div id="shop-box">
+        <h2>WAVE <span id="shop-wave">1</span> CLEARED</h2>
+        <p class="shop-score">SCORE&nbsp;<span id="shop-score">0</span></p>
+        <div id="shop-items"></div>
+        <button id="shop-continue">NEXT WAVE &#9654;</button>
+        <p class="tiny">Press [1]–[4] to buy &nbsp;·&nbsp; [ENTER] for next wave</p>
+      </div>
     </div>
 
     <!-- Game over overlay -->

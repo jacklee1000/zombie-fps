@@ -253,11 +253,56 @@ const synthHitmarker = () => render(0.06, (ctx) => {
   o.connect(g2).connect(ctx.destination); o.start(0); o.stop(0.04);
 });
 
+// 14. EXPLOSION — barrel blast: huge low boom + crackling debris noise.
+const synthExplosion = () => render(1.1, (ctx) => {
+  const n = ctx.createBufferSource(); n.buffer = noiseBuffer(ctx, 1.1);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(2400, 0); lp.frequency.exponentialRampToValueAtTime(120, 0.7);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, 0); g.gain.exponentialRampToValueAtTime(1, 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, 1.0);
+  n.connect(lp).connect(g).connect(ctx.destination); n.start(0);
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(160, 0); o.frequency.exponentialRampToValueAtTime(28, 0.6);
+  const g2 = ctx.createGain(); g2.gain.setValueAtTime(1, 0); g2.gain.exponentialRampToValueAtTime(0.001, 0.8);
+  o.connect(g2).connect(ctx.destination); o.start(0); o.stop(0.8);
+});
+
+// 15. MELEE — fast air whoosh + dull impact thud.
+const synthMelee = () => render(0.3, (ctx) => {
+  const n = ctx.createBufferSource(); n.buffer = noiseBuffer(ctx, 0.3);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(900, 0); bp.frequency.exponentialRampToValueAtTime(2600, 0.12); bp.Q.value = 0.7;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, 0); g.gain.exponentialRampToValueAtTime(0.6, 0.03);
+  g.gain.exponentialRampToValueAtTime(0.001, 0.22);
+  n.connect(bp).connect(g).connect(ctx.destination); n.start(0);
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(120, 0.06); o.frequency.exponentialRampToValueAtTime(50, 0.2);
+  const g2 = ctx.createGain();
+  g2.gain.setValueAtTime(0.0001, 0.06); g2.gain.exponentialRampToValueAtTime(0.5, 0.09);
+  g2.gain.exponentialRampToValueAtTime(0.001, 0.26);
+  o.connect(g2).connect(ctx.destination); o.start(0.06); o.stop(0.3);
+});
+
+// 16. CAR ALARM — looping two-tone honk (high/low alternating).
+const synthCarAlarm = () => render(0.8, (ctx) => {
+  const tone = (t, freq) => {
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.32, t + 0.02);
+    g.gain.setValueAtTime(0.32, t + 0.34); g.gain.linearRampToValueAtTime(0.0001, t + 0.38);
+    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.4);
+  };
+  tone(0, 740);
+  tone(0.4, 560);
+});
+
 // Per-sound base volumes — tuned so nothing is harsh.
 const VOL = {
   shotgun: 0.45, machinegun: 0.26, reload: 0.5, groan: 0.5, death: 0.5,
   hit: 0.55, empty: 0.4, footstep: 0.22, music: 0.32, wave: 0.5, gameover: 0.65,
-  pickup: 0.5, hitmarker: 0.3,
+  pickup: 0.5, hitmarker: 0.3, explosion: 0.7, melee: 0.5, caralarm: 0.3,
 };
 
 const SYNTHS = {
@@ -265,7 +310,13 @@ const SYNTHS = {
   groan: synthGroan, death: synthDeath, hit: synthPlayerHit, empty: synthEmpty,
   footstep: synthFootstep, music: synthMusic, wave: synthWaveStart, gameover: synthGameOver,
   pickup: synthPickup, hitmarker: synthHitmarker,
+  explosion: synthExplosion, melee: synthMelee, caralarm: synthCarAlarm,
 };
+
+// Sounds that can be played through THREE.PositionalAudio: their offline-rendered
+// buffers are kept around (see init) so the 3D engine can re-buffer them in its
+// own AudioContext for true left/right spatialization.
+const POSITIONAL_KEYS = new Set(['groan', 'death']);
 
 class AudioEngine {
   constructor() {
@@ -273,6 +324,8 @@ class AudioEngine {
     this.ready = false;
     this.musicMuted = false;
     this._musicId = null;
+    // Offline-rendered buffers retained for THREE.PositionalAudio (groan/death).
+    this.rawBuffers = {};
   }
 
   // Render every sound up front (offline rendering needs no user gesture).
@@ -288,16 +341,29 @@ class AudioEngine {
       )
     );
     for (const [key, src] of entries) {
-      const opts = { volume: VOL[key], loop: key === 'music' };
+      const opts = { volume: VOL[key], loop: key === 'music' || key === 'caralarm' };
       if (src.url) {
         opts.src = [src.url]; // real file — let Howler infer format from the URL
       } else {
         opts.src = [bufferToWavURI(src.buffer)];
         opts.format = ['wav'];
+        // Keep the raw PCM so the positional engine can re-buffer it.
+        if (POSITIONAL_KEYS.has(key)) this.rawBuffers[key] = src.buffer;
       }
       this.howls[key] = new Howl(opts);
     }
     this.ready = true;
+  }
+
+  // Build a fresh AudioBuffer for `key` inside the given AudioContext (used by
+  // THREE.PositionalAudio, which needs buffers from its own listener context).
+  // Returns null when no raw buffer exists (e.g. a real audio file was used).
+  toContextBuffer(key, ctx) {
+    const b = this.rawBuffers[key];
+    if (!b || !ctx) return null;
+    const out = ctx.createBuffer(b.numberOfChannels, b.length, b.sampleRate);
+    for (let c = 0; c < b.numberOfChannels; c++) out.copyToChannel(b.getChannelData(c), c);
+    return out;
   }
 
   _play(key) {
@@ -315,6 +381,17 @@ class AudioEngine {
   gameOver() { this._play('gameover'); }
   pickup() { this._play('pickup'); }
   hitmarker() { this._play('hitmarker'); }
+  explosion() { this._play('explosion'); }
+  melee() { this._play('melee'); }
+
+  // Looping car alarm — returns the playback id so the caller can stop it.
+  carAlarmStart() {
+    if (this.ready && this.howls.caralarm) return this.howls.caralarm.play();
+    return null;
+  }
+  carAlarmStop(id) {
+    if (this.ready && this.howls.caralarm && id != null) this.howls.caralarm.stop(id);
+  }
 
   // Distance-attenuated groan (0..1 closeness scales the volume).
   groan(closeness = 1) {
